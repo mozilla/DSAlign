@@ -1,0 +1,2 @@
+deepspeech
+webrtcvad
