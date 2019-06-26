@@ -5,17 +5,16 @@ import wavSplit
 from deepspeech import Model
 from timeit import default_timer as timer
 
-'''
-Load the pre-trained model into the memory
-@param models: Output Grapgh Protocol Buffer file
-@param alphabet: Alphabet.txt file
-@param lm: Language model file
-@param trie: Trie file
 
-@Retval
-Returns a list [DeepSpeech Object, Model Load Time, LM Load Time]
-'''
 def load_model(models, alphabet, lm, trie):
+    """
+    Load the pre-trained model into the memory
+    :param models: Output Graph Protocol Buffer file
+    :param alphabet: Alphabet.txt file
+    :param lm: Language model file
+    :param trie: Trie file
+    :return: tuple (DeepSpeech object, Model Load Time, LM Load Time)
+    """
     N_FEATURES = 26
     N_CONTEXT = 9
     BEAM_WIDTH = 500
@@ -32,72 +31,65 @@ def load_model(models, alphabet, lm, trie):
     lm_load_end = timer() - lm_load_start
     logging.debug('Loaded language model in %0.3fs.' % (lm_load_end))
 
-    return [ds, model_load_end, lm_load_end]
+    return ds, model_load_end, lm_load_end
 
-'''
-Run Inference on input audio file
-@param ds: Deepspeech object
-@param audio: Input audio for running inference on
-@param fs: Sample rate of the input audio file
 
-@Retval:
-Returns a list [Inference, Inference Time, Audio Length]
-
-'''
 def stt(ds, audio, fs):
-    inference_time = 0.0
+    """
+    Run Inference on input audio file
+    :param ds: DeepSpeech object
+    :param audio: Input audio for running inference on
+    :param fs: Sample rate of the input audio file
+    :return: tuple (Inference result text, Inference time)
+    """
     audio_length = len(audio) * (1 / 16000)
 
-    # Run Deepspeech
+    # Run DeepSpeech
     logging.debug('Running inference...')
     inference_start = timer()
     output = ds.stt(audio, fs)
-    inference_end = timer() - inference_start
-    inference_time += inference_end
-    logging.debug('Inference took %0.3fs for %0.3fs audio file.' % (inference_end, audio_length))
+    inference_time = timer() - inference_start
+    logging.debug('Inference took %0.3fs for %0.3fs audio file.' % (inference_time, audio_length))
+    return output, inference_time
 
-    return [output, inference_time]
 
-'''
-Resolve directory path for the models and fetch each of them.
-@param dirName: Path to the directory containing pre-trained models
-
-@Retval:
-Retunns a tuple containing each of the model files (pb, alphabet, lm and trie)
-'''
-def resolve_models(dirName):
-    pb = glob.glob(dirName + "/*.pb")[0]
+def resolve_models(dir_name):
+    """
+    Resolve directory path for the models and fetch each of them.
+    :param dir_name: Path to the directory containing pre-trained models
+    :return: tuple containing each of the model files (pb, alphabet, lm and trie)
+    """
+    pb = glob.glob(dir_name + "/*.pb")[0]
     logging.debug("Found Model: %s" % pb)
 
-    alphabet = glob.glob(dirName + "/alphabet.txt")[0]
+    alphabet = glob.glob(dir_name + "/alphabet.txt")[0]
     logging.debug("Found Alphabet: %s" % alphabet)
 
-    lm = glob.glob(dirName + "/lm.binary")[0]
-    trie = glob.glob(dirName + "/trie")[0]
+    lm = glob.glob(dir_name + "/lm.binary")[0]
+    trie = glob.glob(dir_name + "/trie")[0]
     logging.debug("Found Language Model: %s" % lm)
     logging.debug("Found Trie: %s" % trie)
 
     return pb, alphabet, lm, trie
 
-'''
-Generate VAD segments. Filters out non-voiced audio frames.
-@param waveFile: Input wav file to run VAD on.0
 
-@Retval:
-Returns tuple of
-    segments: a bytearray of multiple smaller audio frames
-              (The longer audio split into mutiple smaller one's)
-    sample_rate: Sample rate of the input audio file
-    audio_length: Duraton of the input audio file
-
-'''
-def vad_segment_generator(wavFile, aggressiveness):
-    logging.debug("Caught the wav file @: %s" % (wavFile))
-    audio, sample_rate, audio_length = wavSplit.read_wave(wavFile)
+def vad_segment_generator(wav_file, aggressiveness):
+    """
+    Generate VAD segments. Filters out non-voiced audio frames.
+    :param wav_file: Input wav file to run VAD on.0
+    :param aggressiveness: How aggressive filtering out non-speech is (between 0 and 3)
+    :return: Returns tuple of
+        segments: a bytearray of multiple smaller audio frames
+                  (The longer audio split into multiple smaller one's)
+        sample_rate: Sample rate of the input audio file
+        audio_length: Duration of the input audio file
+    """
+    logging.debug("Caught the wav file @: %s" % wav_file)
+    audio, sample_rate, audio_length = wavSplit.read_wave(wav_file)
     assert sample_rate == 16000, "Only 16000Hz input WAV files are supported for now!"
     vad = webrtcvad.Vad(int(aggressiveness))
     frames = wavSplit.frame_generator(30, audio, sample_rate)
     frames = list(frames)
-    segments = wavSplit.vad_collector(sample_rate, 30, 300, vad, frames)
+    segments = wavSplit.vad_collector(sample_rate, 30, 300, 0.5, vad, frames)
 
     return segments, sample_rate, audio_length
