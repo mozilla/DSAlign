@@ -1,3 +1,4 @@
+nltk
 six
 deepspeech
 webrtcvad

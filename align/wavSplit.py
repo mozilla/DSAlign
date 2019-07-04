@@ -94,7 +94,7 @@ def vad_collector(sample_rate, frame_duration_ms,
     triggered = False
 
     voiced_frames = []
-    for frame in frames:
+    for frame_index, frame in enumerate(frames):
         is_speech = vad.is_speech(frame.bytes, sample_rate)
 
         if not triggered:
@@ -122,13 +122,18 @@ def vad_collector(sample_rate, frame_duration_ms,
             # audio we've collected.
             if num_unvoiced > threshold * ring_buffer.maxlen:
                 triggered = False
-                yield b''.join([f.bytes for f in voiced_frames])
+                yield b''.join([f.bytes for f in voiced_frames]), \
+                      frame_duration_ms * (frame_index - len(voiced_frames)), \
+                      frame_duration_ms * frame_index
                 ring_buffer.clear()
                 voiced_frames = []
+
     if triggered:
         pass
     # If we have any leftover voiced audio when we run out of input,
     # yield it.
     if voiced_frames:
-        yield b''.join([f.bytes for f in voiced_frames])
+        yield b''.join([f.bytes for f in voiced_frames]), \
+              frame_duration_ms * (frame_index - len(voiced_frames)), \
+              frame_duration_ms * (frame_index + 1)
 

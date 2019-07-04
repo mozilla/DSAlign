@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import codecs
 import logging
+from nltk import ngrams
 
 from six.moves import range
 
@@ -55,6 +56,57 @@ class Alphabet(object):
         return self._config_file
 
 
+class TextCleaner:
+    def __init__(self, original_text, alphabet, to_lower=True, normalize_space=True):
+        self.original_text = original_text
+        clean_text = original_text
+        if to_lower:
+            clean_text = clean_text.lower()
+        if normalize_space:
+            clean_text = ' '.join(clean_text.split())
+        self.clean_text = alphabet.filter(clean_text)
+
+    def get_original_offset(self, clean_offset):
+        return clean_offset
+
+
+class LevenshteinSearch:
+    def __init__(self, text):
+        self.text = text
+        self.ngrams = {}
+        for i, ngram in enumerate(ngrams(' ' + text + ' ', 3)):
+            if ngram in self.ngrams:
+                ngram_bucket = self.ngrams[ngram]
+            else:
+                ngram_bucket = self.ngrams[ngram] = []
+            ngram_bucket.append(i)
+
+    def find_best(self, look_for, start=0, stop=-1, threshold=0):
+        stop = len(self.text) if stop < 0 else stop
+        window_size = len(look_for)
+        windows = {}
+        for i, ngram in enumerate(ngrams(' ' + look_for + ' ', 3)):
+            if ngram in self.ngrams:
+                ngram_bucket = self.ngrams[ngram]
+                for occurrence in ngram_bucket:
+                    if occurrence < start or occurrence > stop:
+                        continue
+                    window = occurrence // window_size
+                    windows[window] = (windows[window] + 1) if window in windows else 1
+        candidate_windows = sorted(windows.keys(), key=lambda w: windows[w], reverse=True)
+        found_best = False
+        best_distance = -1
+        best_offset = -1
+        best_len = -1
+        for window in candidate_windows[0:4]:
+            for offset in range(int((window-0.5)*window_size), int((window+0.5)*window_size)):
+                distance = levenshtein(self.text[offset:offset + len(look_for)], look_for)
+                if not found_best or distance < best_distance:
+                    found_best = True
+                    best_distance = distance
+                    best_offset = offset
+                    best_len = len(look_for)
+        return best_distance, best_offset, best_len
 
 
 # The following code is from: http://hetland.org/coding/python/levenshtein.py
@@ -88,25 +140,3 @@ def levenshtein(a, b):
             current[j] = min(add, delete, change)
 
     return current[n]
-
-
-def minimal_distance(search_in, search_for, start=0, threshold=0):
-    best_distance = 1000000000
-    best_offset = -1
-    best_len = -1
-    window = 10
-    rough_acceptable_distance = int(1.5 * window)
-    acceptable_distance = int(len(search_for) * threshold)
-    stop = len(search_in)-len(search_for)
-    for rough_offset in range(start, stop, window):
-        rough_distance = levenshtein(search_in[rough_offset:rough_offset+len(search_for)], search_for)
-        if rough_distance < rough_acceptable_distance:
-            for offset in range(rough_offset-window, rough_offset+window, 1):
-                distance = levenshtein(search_in[offset:offset+len(search_for)], search_for)
-                if distance < best_distance:
-                    best_distance = distance
-                    best_offset = offset
-                    best_len = len(search_for)
-            if best_distance <= acceptable_distance:
-                return best_distance, best_offset, best_len
-    return -1, 0, 0
