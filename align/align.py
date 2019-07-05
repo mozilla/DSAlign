@@ -4,6 +4,7 @@ import text
 import json
 import logging
 import argparse
+import subprocess
 import os.path as path
 import numpy as np
 import wavTranscriber
@@ -23,6 +24,8 @@ def main(args):
                         help='Path to directory that contains all model files (output_graph, lm, trie and alphabet)')
     parser.add_argument('--loglevel', type=int, required=False,
                         help='Log level (between 0 and 50) - default: 20')
+    parser.add_argument('--play', action="store_true",
+                        help='Plays audio fragments as they are matched using SoX audio tool')
     args = parser.parse_args()
 
     # Debug helpers
@@ -68,8 +71,7 @@ def main(args):
             fragments.append({
                 'time_start': time_start,
                 'time_end':   time_end,
-                'transcript': segment_transcript,
-                'offset':     offset
+                'transcript': segment_transcript
             })
             offset += len(segment_transcript)
 
@@ -80,18 +82,24 @@ def main(args):
     logging.debug("Loading original transcript from %s..." % args.transcript)
     with open(args.transcript, 'r') as transcript_file:
         original_transcript = transcript_file.read()
-    original_transcript = ' '.join(original_transcript.lower().split())
-    original_transcript = alphabet.filter(original_transcript)
-    ls = text.LevenshteinSearch(original_transcript)
+    tc = text.TextCleaner(original_transcript, alphabet)
+    ls = text.LevenshteinSearch(tc.clean_text)
     start = 0
     for fragment in fragments:
-        logging.debug('STT Transcribed: %s' % fragment['transcript'])
-        match_distance, match_offset, match_len = ls.find_best(fragment['transcript'])
-        if match_offset >= 0:
-            fragment['original'] = original_transcript[match_offset:match_offset+match_len]
-            logging.debug('       Original: %s' % fragment['original'])
+        fragment_transcript = fragment['transcript']
+        match_distance, match_offset, match_len = ls.find_best(fragment_transcript)
+        if match_offset >= 0 and match_distance < 0.2 * len(fragment_transcript):
+            logging.debug('transcribed: %s' % fragment['transcript'])
+            original_start = tc.get_original_offset(match_offset)
+            original_end = tc.get_original_offset(match_offset+match_len)
+            fragment['offset'] = original_start
+            fragment['length'] = original_end-original_start
+            logging.debug('   original: %s' % ' '.join(original_transcript[original_start:original_end].split()))
             start = match_offset+match_len
-
+            if args.play:
+                subprocess.check_call(['play', args.audio, 'trim', str(fragment['time_start']/1000.0), '='+str(fragment['time_end']/1000.0)])
+    with open(args.result, 'w') as result_file:
+        result_file.write(json.dumps(fragments))
 
 if __name__ == '__main__':
     main(sys.argv[1:])

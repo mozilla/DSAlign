@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import math
 import codecs
 import logging
 from nltk import ngrams
@@ -28,13 +29,6 @@ class Alphabet(object):
     def has_label(self, string):
         return string in self._str_to_label
 
-    def filter(self, string):
-        new_string = ''
-        for c in string:
-            if self.has_label(c):
-                new_string += c
-        return new_string
-
     def label_from_string(self, string):
         try:
             return self._str_to_label[string]
@@ -59,15 +53,32 @@ class Alphabet(object):
 class TextCleaner:
     def __init__(self, original_text, alphabet, to_lower=True, normalize_space=True):
         self.original_text = original_text
-        clean_text = original_text
-        if to_lower:
-            clean_text = clean_text.lower()
-        if normalize_space:
-            clean_text = ' '.join(clean_text.split())
-        self.clean_text = alphabet.filter(clean_text)
+        prepared_text = original_text.lower() if to_lower else original_text
+        cleaned = []
+        self.positions = []
+        ws = False
+        for position, c in enumerate(prepared_text):
+            if not alphabet.has_label(c):
+                continue
+            if normalize_space and c.isspace():
+                if ws:
+                    continue
+                else:
+                    ws = True
+                    c = ' '
+            else:
+                ws = False
+            cleaned.append(c)
+            self.positions.append(position)
+        self.clean_text = ''.join(cleaned)
 
     def get_original_offset(self, clean_offset):
-        return clean_offset
+        if clean_offset == len(self.positions):
+            return self.positions[-1]+1
+        try:
+            return self.positions[clean_offset]
+        except:
+            print(len(self.positions), clean_offset)
 
 
 class LevenshteinSearch:
@@ -95,18 +106,20 @@ class LevenshteinSearch:
                     windows[window] = (windows[window] + 1) if window in windows else 1
         candidate_windows = sorted(windows.keys(), key=lambda w: windows[w], reverse=True)
         found_best = False
-        best_distance = -1
-        best_offset = -1
-        best_len = -1
-        for window in candidate_windows[0:4]:
-            for offset in range(int((window-0.5)*window_size), int((window+0.5)*window_size)):
-                distance = levenshtein(self.text[offset:offset + len(look_for)], look_for)
-                if not found_best or distance < best_distance:
+        best = (-1, -1, -1)
+        best_virtual_distance = -1
+        for window in candidate_windows[:4]:
+            start_offset = max(start,              int((window-0.5)*window_size))
+            stop_offset  = min(stop-len(look_for), int((window+0.5)*window_size))
+            for offset in range(start_offset, stop_offset):
+                distance = levenshtein(self.text[offset:offset+len(look_for)], look_for)
+                virtual_distance = distance*(1+math.sqrt(offset-start)/100)
+                # print(virtual_distance)
+                if not found_best or virtual_distance < best_virtual_distance:
                     found_best = True
-                    best_distance = distance
-                    best_offset = offset
-                    best_len = len(look_for)
-        return best_distance, best_offset, best_len
+                    best_virtual_distance = virtual_distance
+                    best = (distance, offset, len(look_for))
+        return best
 
 
 # The following code is from: http://hetland.org/coding/python/levenshtein.py
