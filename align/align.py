@@ -19,13 +19,21 @@ def main(args):
     parser.add_argument('result', type=str,
                         help='Target path of alignment result file (JSON)')
     parser.add_argument('--aggressive', type=int, choices=range(4), required=False,
-                        help='Determines how aggressive filtering out non-speech is. (Interger between 0-3)')
+                        help='Determines how aggressive filtering out non-speech is. (Integer between 0-3)')
     parser.add_argument('--model', required=False,
                         help='Path to directory that contains all model files (output_graph, lm, trie and alphabet)')
-    parser.add_argument('--loglevel', type=int, required=False,
-                        help='Log level (between 0 and 50) - default: 20')
     parser.add_argument('--play', action="store_true",
                         help='Plays audio fragments as they are matched using SoX audio tool')
+    parser.add_argument('--loglevel', type=int, required=False, default=20,
+                        help='Log level (between 0 and 50) - default: 20')
+    parser.add_argument('--debug-context', type=int, required=False, default=10,
+                        help='Log level (between 0 and 50) - default: 10')
+    parser.add_argument('--keep-dashes', action="store_true",
+                        help='No replacing of dashes with spaces. Dependent of alphabet if kept at all.')
+    parser.add_argument('--keep-ws', action="store_true",
+                        help='No normalization of whitespace. Keep it as it is.')
+    parser.add_argument('--keep-casing', action="store_true",
+                        help='No lower-casing of characters. Keep them as they are.')
     args = parser.parse_args()
 
     # Debug helpers
@@ -69,9 +77,9 @@ def main(args):
                 continue
             inference_time += segment_inference_time
             fragments.append({
-                'time_start': time_start,
-                'time_end':   time_end,
-                'transcript': segment_transcript
+                'time-start':  time_start,
+                'time-length': time_end-time_start,
+                'transcript':  segment_transcript
             })
             offset += len(segment_transcript)
 
@@ -82,24 +90,45 @@ def main(args):
     logging.debug("Loading original transcript from %s..." % args.transcript)
     with open(args.transcript, 'r') as transcript_file:
         original_transcript = transcript_file.read()
-    tc = text.TextCleaner(original_transcript, alphabet)
+    tc = text.TextCleaner(original_transcript,
+                          alphabet,
+                          dashes_to_ws=not args.keep_dashes,
+                          normalize_space=not args.keep_ws,
+                          to_lower=not args.keep_casing)
     ls = text.LevenshteinSearch(tc.clean_text)
     start = 0
+    result_fragments = []
     for fragment in fragments:
+        time_start = fragment['time-start']
+        time_length = fragment['time-length']
         fragment_transcript = fragment['transcript']
-        match_distance, match_offset, match_len = ls.find_best(fragment_transcript)
-        if match_offset >= 0 and match_distance < 0.2 * len(fragment_transcript):
-            logging.debug('transcribed: %s' % fragment['transcript'])
-            original_start = tc.get_original_offset(match_offset)
-            original_end = tc.get_original_offset(match_offset+match_len)
-            fragment['offset'] = original_start
-            fragment['length'] = original_end-original_start
-            logging.debug('   original: %s' % ' '.join(original_transcript[original_start:original_end].split()))
-            start = match_offset+match_len
+        match_interval, match_distance = ls.find_best(fragment_transcript)
+        if match_interval is not None:
+            match_start, match_end = match_interval
+            fragment_matched = tc.clean_text[match_start:match_end]
+            cer = text.levenshtein(fragment_transcript, fragment_matched) / len(fragment_matched)
+            wer = text.levenshtein(fragment_transcript.split(), fragment_matched.split()) / len(fragment_matched.split())
+            original_start = tc.get_original_offset(match_start)
+            original_end = tc.get_original_offset(match_end)
+            result_fragments.append({
+                'time-start':  time_start,
+                'time-length': time_length,
+                'text-start':  original_start,
+                'text-length': original_end-original_start,
+                'cer':         cer,
+                'wer':         wer
+            })
+            logging.debug('Sample with WER %.2f CER %.2f' % (wer * 100, cer * 100))
+            logging.debug('- T:  ' + args.debug_context * ' ' + '%s' % fragment_transcript)
+            logging.debug('- O: %s|%s|%s' % (
+                tc.clean_text[match_start-args.debug_context:match_start],
+                fragment_matched,
+                tc.clean_text[match_end:match_end+args.debug_context]))
+            start = match_end
             if args.play:
-                subprocess.check_call(['play', args.audio, 'trim', str(fragment['time_start']/1000.0), '='+str(fragment['time_end']/1000.0)])
+                subprocess.check_call(['play', args.audio, 'trim', str(time_start/1000.0), '='+str(time_length/1000.0)])
     with open(args.result, 'w') as result_file:
-        result_file.write(json.dumps(fragments))
+        result_file.write(json.dumps(result_fragments))
 
 if __name__ == '__main__':
     main(sys.argv[1:])

@@ -51,15 +51,15 @@ class Alphabet(object):
 
 
 class TextCleaner:
-    def __init__(self, original_text, alphabet, to_lower=True, normalize_space=True):
+    def __init__(self, original_text, alphabet, to_lower=True, normalize_space=True, dashes_to_ws=True):
         self.original_text = original_text
         prepared_text = original_text.lower() if to_lower else original_text
         cleaned = []
         self.positions = []
         ws = False
         for position, c in enumerate(prepared_text):
-            if not alphabet.has_label(c):
-                continue
+            if dashes_to_ws and c == '-' and not alphabet.has_label('-'):
+                c = ' '
             if normalize_space and c.isspace():
                 if ws:
                     continue
@@ -68,6 +68,8 @@ class TextCleaner:
                     c = ' '
             else:
                 ws = False
+            if not alphabet.has_label(c):
+                continue
             cleaned.append(c)
             self.positions.append(position)
         self.clean_text = ''.join(cleaned)
@@ -81,6 +83,31 @@ class TextCleaner:
             print(len(self.positions), clean_offset)
 
 
+def get_token_interval(text, at):
+    start = len(text)
+    end = 0
+    for step in [-1, 1]:
+        pos = at
+        while 0 <= pos < len(text) and not text[pos].isspace():
+            if pos < start:
+                start = pos
+            if pos > end:
+                end = pos
+            pos += step
+    return (start, end+1) if start <= end else (at, at)
+
+
+def combine_intervals(i1, i2):
+    s1, e1 = i1
+    s2, e2 = i2
+    return min(s1, s2), max(e1, e2)
+
+
+def interval_len(interval):
+    start, end = interval
+    return end-start
+
+
 class LevenshteinSearch:
     def __init__(self, text):
         self.text = text
@@ -91,6 +118,27 @@ class LevenshteinSearch:
             else:
                 ngram_bucket = self.ngrams[ngram] = []
             ngram_bucket.append(i)
+
+    def _find_best_in_interval(self, look_for, start, stop):
+        found_best = False
+        best_distance = -1
+        best_start = -1
+        best_end = -1
+        for offset in range(start, stop):
+            distance = levenshtein(self.text[offset:offset + len(look_for)], look_for)
+            if not found_best or distance < best_distance:
+                found_best = True
+                best_distance = distance
+                best_start = offset
+                best_end = offset + len(look_for)
+
+        first_token = get_token_interval(self.text, best_start)
+        if interval_len(first_token) == 0:
+            first_token = (best_start+1, best_start+1)
+        best_interval = combine_intervals(first_token,
+                                          get_token_interval(self.text, best_end))
+        best_distance = levenshtein(self.text[best_start:best_end], look_for)
+        return best_distance, best_interval
 
     def find_best(self, look_for, start=0, stop=-1, threshold=0):
         stop = len(self.text) if stop < 0 else stop
@@ -105,21 +153,16 @@ class LevenshteinSearch:
                     window = occurrence // window_size
                     windows[window] = (windows[window] + 1) if window in windows else 1
         candidate_windows = sorted(windows.keys(), key=lambda w: windows[w], reverse=True)
-        found_best = False
-        best = (-1, -1, -1)
-        best_virtual_distance = -1
-        for window in candidate_windows[:4]:
-            start_offset = max(start,              int((window-0.5)*window_size))
-            stop_offset  = min(stop-len(look_for), int((window+0.5)*window_size))
-            for offset in range(start_offset, stop_offset):
-                distance = levenshtein(self.text[offset:offset+len(look_for)], look_for)
-                virtual_distance = distance*(1+math.sqrt(offset-start)/100)
-                # print(virtual_distance)
-                if not found_best or virtual_distance < best_virtual_distance:
-                    found_best = True
-                    best_virtual_distance = virtual_distance
-                    best = (distance, offset, len(look_for))
-        return best
+        best_interval = None
+        best_distance = -1
+        for window in candidate_windows[:2]:
+            interval_start = max(start,              int((window-0.5)*window_size))
+            interval_stop  = min(stop-len(look_for), int((window+0.5)*window_size))
+            interval_distance, interval = self._find_best_in_interval(look_for, interval_start, interval_stop)
+            if not best_interval or interval_distance < best_distance:
+                best_interval = interval
+                best_distance = interval_distance
+        return best_interval, best_distance
 
 
 # The following code is from: http://hetland.org/coding/python/levenshtein.py
