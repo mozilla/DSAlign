@@ -66,10 +66,10 @@ class TextCleaner:
                 else:
                     ws = True
                     c = ' '
-            else:
-                ws = False
             if not alphabet.has_label(c):
                 continue
+            if not c.isspace():
+                ws = False
             cleaned.append(c)
             self.positions.append(position)
         self.clean_text = ''.join(cleaned)
@@ -97,6 +97,16 @@ def get_token_interval(text, at):
     return (start, end+1) if start <= end else (at, at)
 
 
+def get_token_sibling(text, interval, direction):
+    start, end = interval
+    return get_token_interval(text, start-2 if direction < 0 else end+1)
+
+
+def get_interval_text(text, interval):
+    start, end = interval
+    return text[start:end]
+
+
 def combine_intervals(i1, i2):
     s1, e1 = i1
     s2, e2 = i2
@@ -119,24 +129,67 @@ class LevenshteinSearch:
                 ngram_bucket = self.ngrams[ngram] = []
             ngram_bucket.append(i)
 
+    def _find_best_neighbour_token(self, original_text, center_interval):
+        tokens = [get_token_sibling(self.text, center_interval, -1),
+                  center_interval,
+                  get_token_sibling(self.text, center_interval, 1)]
+        #print(original_text, tokens)
+        tokens = map(lambda t: (t, levenshtein(get_interval_text(self.text, t), original_text)), tokens)
+        tokens = sorted(tokens, key=lambda item: item[1])
+        return tokens[0][0]
+
     def _find_best_in_interval(self, look_for, start, stop):
         found_best = False
-        best_distance = -1
-        best_start = -1
-        best_end = -1
-        for offset in range(start, stop):
-            distance = levenshtein(self.text[offset:offset + len(look_for)], look_for)
-            if not found_best or distance < best_distance:
-                found_best = True
-                best_distance = distance
-                best_start = offset
-                best_end = offset + len(look_for)
 
-        first_token = get_token_interval(self.text, best_start)
-        if interval_len(first_token) == 0:
-            first_token = (best_start+1, best_start+1)
-        best_interval = combine_intervals(first_token,
-                                          get_token_interval(self.text, best_end))
+        def interval_search(a, b, compute, result_a=None, result_b=None):
+            if a > b:
+                a, b = b, a
+            if a == b:
+                return result_a or result_b or compute(a)
+            result_a = result_a or compute(a)
+            result_b = result_b or compute(b)
+            if b == a+1:
+                return result_a if result_a[0] < result_b[0] else result_b
+            c = (a+b) // 2
+            if result_a[0] < result_b[0]:
+                return interval_search(a, c, compute, result_a=result_a)
+            else:
+                return interval_search(c, b, compute, result_b=result_b)
+
+        best_distance, best_interval = \
+            interval_search(start,
+                            stop,
+                            lambda p: (levenshtein(self.text[p:p + len(look_for)], look_for), (p, p + len(look_for))))
+        best_start, best_end = best_interval
+
+        stretch_radius = len(look_for) // 3
+
+        best_distance, best_interval = \
+            interval_search(best_start-stretch_radius,
+                            best_start+stretch_radius,
+                            lambda p: (levenshtein(self.text[p:best_end], look_for), (p, best_end)))
+        best_start, best_end = best_interval
+
+        best_distance, best_interval = \
+            interval_search(best_end-stretch_radius,
+                            best_end+stretch_radius,
+                            lambda p: (levenshtein(self.text[best_start:p], look_for), (best_start, p)))
+        best_start, best_end = best_interval
+
+        first_original_token = get_token_interval(self.text, best_start)
+        if interval_len(first_original_token) == 0:
+            first_original_token = get_token_interval(self.text, best_start+1)
+        first_search_token = get_interval_text(look_for, get_token_interval(look_for, 0))
+        first_original_token = self._find_best_neighbour_token(first_search_token, first_original_token)
+
+        last_original_token = get_token_interval(self.text, best_end-1)
+        if interval_len(last_original_token) == 0:
+            last_original_token = get_token_interval(self.text, best_end-2)
+        last_search_token = get_interval_text(look_for, get_token_interval(look_for, len(look_for)-2))
+        last_original_token = self._find_best_neighbour_token(last_search_token, last_original_token)
+
+        best_interval = combine_intervals(first_original_token, last_original_token)
+        best_start, best_end = best_interval
         best_distance = levenshtein(self.text[best_start:best_end], look_for)
         return best_distance, best_interval
 
@@ -155,7 +208,11 @@ class LevenshteinSearch:
         candidate_windows = sorted(windows.keys(), key=lambda w: windows[w], reverse=True)
         best_interval = None
         best_distance = -1
-        for window in candidate_windows[:2]:
+        last_window_grams = 0.1
+        for window in candidate_windows[:10]:
+            if windows[window] / last_window_grams < 0.8:
+                break
+            last_window_grams = windows[window]
             interval_start = max(start,              int((window-0.5)*window_size))
             interval_stop  = min(stop-len(look_for), int((window+0.5)*window_size))
             interval_distance, interval = self._find_best_in_interval(look_for, interval_start, interval_stop)

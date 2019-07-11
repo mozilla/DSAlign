@@ -126,7 +126,7 @@ def main(args):
                 tc.clean_text[match_end:match_end+args.debug_context]))
             start = match_end
             if args.play:
-                subprocess.check_call(['play', args.audio, 'trim', str(time_start/1000.0), '='+str(time_length/1000.0)])
+                subprocess.check_call(['play', args.audio, 'trim', str(time_start/1000.0), '='+str((time_start + time_length)/1000.0)])
     with open(args.result, 'w') as result_file:
         result_file.write(json.dumps(result_fragments))
 
