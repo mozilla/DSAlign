@@ -22,15 +22,19 @@ def main(args):
 
     parser.add_argument('--loglevel', type=int, required=False, default=20,
                         help='Log level (between 0 and 50) - default: 20')
+    parser.add_argument('--play', action="store_true",
+                        help='Play audio fragments as they are matched using SoX audio tool')
+    parser.add_argument('--text-context', type=int, required=False, default=10,
+                        help='Size of textual context for logged statements - default: 10')
+
+    audio_group = parser.add_argument_group(title='Audio pre-processing options')
+    audio_group.add_argument('--audio-vad-aggressiveness', type=int, choices=range(4), required=False,
+                             help='Determines how aggressive filtering out non-speech is (default: 3)')
 
     stt_group = parser.add_argument_group(title='STT options')
     stt_group.add_argument('--stt-model-dir', required=False,
                            help='Path to a directory with output_graph, lm, trie and alphabet files ' +
                                 '(default: "data/en"')
-
-    audio_group = parser.add_argument_group(title='Audio pre-processing options')
-    audio_group.add_argument('--audio-vad-aggressiveness', type=int, choices=range(4), required=False,
-                             help='Determines how aggressive filtering out non-speech is (default: 3)')
 
     text_group = parser.add_argument_group(title='Text pre-processing options')
     text_group.add_argument('--text-keep-dashes', action="store_true",
@@ -50,14 +54,10 @@ def main(args):
                              help='Deactivates snapping to similar neighbour tokens ' +
                                   'at the beginning and end of each phrase')
     align_group.add_argument('--align-stretch-fraction', type=float, required=False, default=1/3,
-                             help='Fraction of its original length that a phrase could get expanded or shrinked ' +
+                             help='Fraction of its original length that a phrase could get expanded or shrunken ' +
                                   'to match the original text (default: 0.33)')
 
     output_group = parser.add_argument_group(title='Output options')
-    output_group.add_argument('--output-play', action="store_true",
-                              help='Play audio fragments as they are matched using SoX audio tool')
-    output_group.add_argument('--output-text-context', type=int, required=False, default=10,
-                              help='Size of textual context for logged statements - default: 10')
     output_group.add_argument('--output-min-length', type=int, required=False,
                               help='Minimum phrase length (default: no limit)')
     output_group.add_argument('--output-max-length', type=int, required=False,
@@ -165,13 +165,13 @@ def main(args):
                 'wer':         wer
             })
             logging.debug('Sample with WER %.2f CER %.2f' % (wer * 100, cer * 100))
-            logging.debug('- T:  ' + args.output_text_context * ' ' + '%s' % fragment_transcript)
+            logging.debug('- T:  ' + args.text_context * ' ' + '%s' % fragment_transcript)
             logging.debug('- O: %s|%s|%s' % (
-                tc.clean_text[match_start-args.output_text_context:match_start],
+                tc.clean_text[match_start-args.text_context:match_start],
                 fragment_matched,
-                tc.clean_text[match_end:match_end+args.output_text_context]))
+                tc.clean_text[match_end:match_end+args.text_context]))
             start = match_end
-            if args.output_play:
+            if args.play:
                 subprocess.check_call(['play',
                                        args.audio,
                                        'trim',
