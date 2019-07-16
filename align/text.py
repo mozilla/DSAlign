@@ -50,7 +50,7 @@ class Alphabet(object):
         return self._config_file
 
 
-class TextCleaner:
+class TextCleaner(object):
     def __init__(self, original_text, alphabet, to_lower=True, normalize_space=True, dashes_to_ws=True):
         self.original_text = original_text
         prepared_text = original_text.lower() if to_lower else original_text
@@ -83,42 +83,51 @@ class TextCleaner:
             print(len(self.positions), clean_offset)
 
 
-def get_token_interval(text, at):
-    start = len(text)
-    end = 0
-    for step in [-1, 1]:
-        pos = at
-        while 0 <= pos < len(text) and not text[pos].isspace():
-            if pos < start:
-                start = pos
-            if pos > end:
-                end = pos
-            pos += step
-    return (start, end+1) if start <= end else (at, at)
+class TextRange(object):
+    def __init__(self, document, start, end):
+        self.document = document
+        self.start = start
+        self.end = end
+
+    @staticmethod
+    def token_at(text, position):
+        start = len(text)
+        end = 0
+        for step in [-1, 1]:
+            pos = position
+            while 0 <= pos < len(text) and not text[pos].isspace():
+                if pos < start:
+                    start = pos
+                if pos > end:
+                    end = pos
+                pos += step
+        return TextRange(text, start, end + 1) if start <= end else TextRange(text, position, position)
+
+    def neighbour_token(self, direction):
+        return TextRange.token_at(self.document, self.start - 2 if direction < 0 else self.end + 1)
+
+    def next_token(self):
+        return self.neighbour_token(1)
+
+    def prev_token(self):
+        return self.neighbour_token(-1)
+
+    def get_text(self):
+        return self.document[self.start:self.end]
+
+    def __add__(self, other):
+        if not self.document == other.document:
+            raise Exception("Unable to join with token from other string")
+        return TextRange(self.document, min(self.start, other.start), max(self.end, other.end))
+
+    def __eq__(self, other):
+        return self.document == other.document and self.start == other.start and self.end == other.end
+
+    def __len__(self):
+        return self.end-self.start
 
 
-def get_token_sibling(text, interval, direction):
-    start, end = interval
-    return get_token_interval(text, start-2 if direction < 0 else end+1)
-
-
-def get_interval_text(text, interval):
-    start, end = interval
-    return text[start:end]
-
-
-def combine_intervals(i1, i2):
-    s1, e1 = i1
-    s2, e2 = i2
-    return min(s1, s2), max(e1, e2)
-
-
-def interval_len(interval):
-    start, end = interval
-    return end-start
-
-
-class LevenshteinSearch:
+class LevenshteinSearch(object):
     def __init__(self, text):
         self.text = text
         self.ngrams = {}
@@ -129,12 +138,10 @@ class LevenshteinSearch:
                 ngram_bucket = self.ngrams[ngram] = []
             ngram_bucket.append(i)
 
-    def _find_best_neighbour_token(self, original_text, center_interval):
-        tokens = [get_token_sibling(self.text, center_interval, -1),
-                  center_interval,
-                  get_token_sibling(self.text, center_interval, 1)]
-        #print(original_text, tokens)
-        tokens = map(lambda t: (t, levenshtein(get_interval_text(self.text, t), original_text)), tokens)
+    @staticmethod
+    def _find_best_neighbour_token(original_text, center_token):
+        tokens = [center_token.prev_token(), center_token, center_token.next_token()]
+        tokens = map(lambda t: (t, levenshtein(t.get_text(), original_text)), tokens)
         tokens = sorted(tokens, key=lambda item: item[1])
         return tokens[0][0]
 
@@ -177,21 +184,23 @@ class LevenshteinSearch:
         best_start, best_end = best_interval
 
         if snap_token:
-            first_original_token = get_token_interval(self.text, best_start)
-            if interval_len(first_original_token) == 0:
-                first_original_token = get_token_interval(self.text, best_start+1)
-            first_search_token = get_interval_text(look_for, get_token_interval(look_for, 0))
-            first_original_token = self._find_best_neighbour_token(first_search_token, first_original_token)
+            first_original_token = TextRange.token_at(self.text, best_start)
+            if len(first_original_token) == 0:
+                first_original_token = first_original_token.next_token()
+            first_original_token = LevenshteinSearch._find_best_neighbour_token(
+                TextRange.token_at(look_for, 0).get_text(),
+                first_original_token)
 
-            last_original_token = get_token_interval(self.text, best_end-1)
-            if interval_len(last_original_token) == 0:
-                last_original_token = get_token_interval(self.text, best_end-2)
-            last_search_token = get_interval_text(look_for, get_token_interval(look_for, len(look_for)-2))
-            last_original_token = self._find_best_neighbour_token(last_search_token, last_original_token)
+            last_original_token = TextRange.token_at(self.text, best_end-1)
+            if len(last_original_token) == 0:
+                last_original_token = last_original_token.prev_token()
+            last_original_token = LevenshteinSearch._find_best_neighbour_token(
+                TextRange.token_at(look_for, len(look_for)-1).get_text(),
+                last_original_token)
 
-            best_interval = combine_intervals(first_original_token, last_original_token)
+            best_interval = first_original_token+last_original_token
 
-        best_distance = levenshtein(get_interval_text(self.text, best_interval), look_for)
+        best_distance = levenshtein(best_interval.get_text(), look_for)
         return best_distance, best_interval
 
     def find_best(self,

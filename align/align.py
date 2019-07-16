@@ -137,14 +137,13 @@ def main(args):
         time_start = fragment['time-start']
         time_length = fragment['time-length']
         fragment_transcript = fragment['transcript']
-        match_interval, match_distance = ls.find_best(fragment_transcript,
+        match, match_distance = ls.find_best(fragment_transcript,
                                                       max_candidates=args.align_max_candidates,
                                                       candidate_threshold=args.align_candidate_threshold,
                                                       snap_token=not args.align_no_snap_to_token,
                                                       stretch_factor=args.align_stretch_fraction)
-        if match_interval is not None:
-            match_start, match_end = match_interval
-            fragment_matched = tc.clean_text[match_start:match_end]
+        if match is not None:
+            fragment_matched = tc.clean_text[match.start:match.end]
             cer = text.levenshtein(fragment_transcript, fragment_matched)/len(fragment_matched)
             wer = text.levenshtein(fragment_transcript.split(), fragment_matched.split())/len(fragment_matched.split())
             if (args.output_min_cer and cer * 100.0 < args.output_min_cer) or \
@@ -154,8 +153,8 @@ def main(args):
                (args.output_min_length and len(fragment_matched) < args.output_min_length) or \
                (args.output_max_length and len(fragment_matched) > args.output_max_length):
                 continue
-            original_start = tc.get_original_offset(match_start)
-            original_end = tc.get_original_offset(match_end)
+            original_start = tc.get_original_offset(match.start)
+            original_end = tc.get_original_offset(match.end)
             result_fragments.append({
                 'time-start':  time_start,
                 'time-length': time_length,
@@ -167,10 +166,10 @@ def main(args):
             logging.debug('Sample with WER %.2f CER %.2f' % (wer * 100, cer * 100))
             logging.debug('- T:  ' + args.text_context * ' ' + '%s' % fragment_transcript)
             logging.debug('- O: %s|%s|%s' % (
-                tc.clean_text[match_start-args.text_context:match_start],
+                tc.clean_text[match.start-args.text_context:match.start],
                 fragment_matched,
-                tc.clean_text[match_end:match_end+args.text_context]))
-            start = match_end
+                tc.clean_text[match.end:match.end+args.text_context]))
+            start = match.end
             if args.play:
                 subprocess.check_call(['play',
                                        args.audio,
