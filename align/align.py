@@ -130,7 +130,7 @@ def main(args):
                           dashes_to_ws=not args.text_keep_dashes,
                           normalize_space=not args.text_keep_ws,
                           to_lower=not args.text_keep_casing)
-    ls = text.LevenshteinSearch(tc.clean_text)
+    ls = text.FuzzySearch(tc.clean_text)
     start = 0
     result_fragments = []
     for fragment in fragments:

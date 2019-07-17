@@ -127,7 +127,23 @@ class TextRange(object):
         return self.end-self.start
 
 
-class LevenshteinSearch(object):
+def greedy_minimum_search(a, b, compute, result_a=None, result_b=None):
+    if a > b:
+        a, b = b, a
+    if a == b:
+        return result_a or result_b or compute(a)
+    result_a = result_a or compute(a)
+    result_b = result_b or compute(b)
+    if b == a+1:
+        return result_a if result_a[0] < result_b[0] else result_b
+    c = (a+b) // 2
+    if result_a[0] < result_b[0]:
+        return greedy_minimum_search(a, c, compute, result_a=result_a)
+    else:
+        return greedy_minimum_search(c, b, compute, result_b=result_b)
+
+
+class FuzzySearch(object):
     def __init__(self, text):
         self.text = text
         self.ngrams = {}
@@ -148,53 +164,38 @@ class LevenshteinSearch(object):
     def _find_best_in_interval(self, look_for, start, stop, snap_token=True, stretch_factor=1/3):
         found_best = False
 
-        def interval_search(a, b, compute, result_a=None, result_b=None):
-            if a > b:
-                a, b = b, a
-            if a == b:
-                return result_a or result_b or compute(a)
-            result_a = result_a or compute(a)
-            result_b = result_b or compute(b)
-            if b == a+1:
-                return result_a if result_a[0] < result_b[0] else result_b
-            c = (a+b) // 2
-            if result_a[0] < result_b[0]:
-                return interval_search(a, c, compute, result_a=result_a)
-            else:
-                return interval_search(c, b, compute, result_b=result_b)
-
         best_distance, best_interval = \
-            interval_search(start,
-                            stop,
-                            lambda p: (levenshtein(self.text[p:p + len(look_for)], look_for), (p, p + len(look_for))))
+            greedy_minimum_search(start,
+                                  stop,
+                                  lambda p: (levenshtein(self.text[p:p + len(look_for)], look_for), (p, p + len(look_for))))
         best_start, best_end = best_interval
 
         stretch_radius = int(len(look_for) * stretch_factor)
 
         best_distance, best_interval = \
-            interval_search(best_start-stretch_radius,
-                            best_start+stretch_radius,
-                            lambda p: (levenshtein(self.text[p:best_end], look_for), (p, best_end)))
+            greedy_minimum_search(best_start-stretch_radius,
+                                  best_start+stretch_radius,
+                                  lambda p: (levenshtein(self.text[p:best_end], look_for), (p, best_end)))
         best_start, best_end = best_interval
 
         best_distance, best_interval = \
-            interval_search(best_end-stretch_radius,
-                            best_end+stretch_radius,
-                            lambda p: (levenshtein(self.text[best_start:p], look_for), (best_start, p)))
+            greedy_minimum_search(best_end-stretch_radius,
+                                  best_end+stretch_radius,
+                                  lambda p: (levenshtein(self.text[best_start:p], look_for), (best_start, p)))
         best_start, best_end = best_interval
 
         if snap_token:
             first_original_token = TextRange.token_at(self.text, best_start)
             if len(first_original_token) == 0:
                 first_original_token = first_original_token.next_token()
-            first_original_token = LevenshteinSearch._find_best_neighbour_token(
+            first_original_token = FuzzySearch._find_best_neighbour_token(
                 TextRange.token_at(look_for, 0).get_text(),
                 first_original_token)
 
             last_original_token = TextRange.token_at(self.text, best_end-1)
             if len(last_original_token) == 0:
                 last_original_token = last_original_token.prev_token()
-            last_original_token = LevenshteinSearch._find_best_neighbour_token(
+            last_original_token = FuzzySearch._find_best_neighbour_token(
                 TextRange.token_at(look_for, len(look_for)-1).get_text(),
                 last_original_token)
 
