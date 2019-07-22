@@ -77,10 +77,7 @@ class TextCleaner(object):
     def get_original_offset(self, clean_offset):
         if clean_offset == len(self.positions):
             return self.positions[-1]+1
-        try:
-            return self.positions[clean_offset]
-        except:
-            print(len(self.positions), clean_offset)
+        return self.positions[clean_offset]
 
 
 class TextRange(object):
@@ -117,7 +114,7 @@ class TextRange(object):
 
     def __add__(self, other):
         if not self.document == other.document:
-            raise Exception("Unable to join with token from other string")
+            raise Exception("Unable to add token from other string")
         return TextRange(self.document, min(self.start, other.start), max(self.end, other.end))
 
     def __eq__(self, other):
@@ -130,6 +127,7 @@ class TextRange(object):
 def greedy_minimum_search(a, b, compute, result_a=None, result_b=None):
     if a > b:
         a, b = b, a
+        result_a, result_b = result_b, result_a
     if a == b:
         return result_a or result_b or compute(a)
     result_a = result_a or compute(a)

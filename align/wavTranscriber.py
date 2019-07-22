@@ -18,7 +18,10 @@ def load_model(models, alphabet, lm, trie):
     N_FEATURES = 26
     N_CONTEXT = 9
     BEAM_WIDTH = 500
-    LM_ALPHA = 0.75
+    #LM_ALPHA = 0.75
+    #LM_BETA = 1.85
+
+    LM_ALPHA = 1
     LM_BETA = 1.85
 
     model_load_start = timer()

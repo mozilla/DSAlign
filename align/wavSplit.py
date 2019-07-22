@@ -123,7 +123,7 @@ def vad_collector(sample_rate, frame_duration_ms,
             if num_unvoiced > threshold * ring_buffer.maxlen:
                 triggered = False
                 yield b''.join([f.bytes for f in voiced_frames]), \
-                      frame_duration_ms * (frame_index - len(voiced_frames)), \
+                      frame_duration_ms * max(0, frame_index - len(voiced_frames)), \
                       frame_duration_ms * frame_index
                 ring_buffer.clear()
                 voiced_frames = []
