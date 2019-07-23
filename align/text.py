@@ -242,6 +242,55 @@ class FuzzySearch(object):
         return best_interval, best_distance
 
 
+def circulate(items):
+    c = len(items)
+    m = c//2
+    for i in range(1, c+1):
+        r = i//2
+        f = -1 + (i % 2)*2
+        offset = m + f*r
+        yield offset, items[offset]
+
+
+def word_similarity(a, b, word_similarities):
+    key = (a, b)
+    if key in word_similarities:
+        return word_similarities[key]
+    avg_len = min(len(a) + len(b), 1) / 2.0
+    s = word_similarities[key] = avg_len / (avg_len + levenshtein(a, b))
+    return s
+
+
+def find_similar_words(a, b, word_similarities, similarity_threshold=0.85, len_threshold=6):
+    found_len = False
+    for i, wa in circulate(a):
+        if len(wa) > len_threshold:
+            found_len = True
+            for j, wb in circulate(b):
+                if word_similarity(wa, wb, word_similarities) < similarity_threshold:
+                    return i, j
+    return find_similar_words(a,
+                              b,
+                              word_similarities,
+                              similarity_threshold=similarity_threshold/(2.0 if found_len else 1.0),
+                              len_threshold=len_threshold//(1 if found_len else 2))
+
+
+def phrase_similarity(a, b, word_similarities):
+    n, m = len(a), len(b)
+    if n > m:
+        a, b = b, a
+        n, m = m, n
+    if n < 2:
+        return word_similarity(''.join(a), ' '.join(b), word_similarities)
+    else:
+        i, j = find_similar_words(a, b, word_similarities)
+        return \
+            phrase_similarity(a[:i], b[:j], word_similarities) + \
+            word_similarity(a[i], b[j], word_similarities) + \
+            phrase_similarity(a[i+1:], b[j+1:], word_similarities)
+
+
 # The following code is from: http://hetland.org/coding/python/levenshtein.py
 
 # This is a straightforward implementation of a well-known algorithm, and thus
