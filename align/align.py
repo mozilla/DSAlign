@@ -1,6 +1,5 @@
-import sys
 import os
-import text
+import sys
 import json
 import logging
 import argparse
@@ -8,6 +7,8 @@ import subprocess
 import os.path as path
 import numpy as np
 import wavTranscriber
+from search import FuzzySearch
+from text import Alphabet, TextCleaner, levenshtein
 
 
 def main(args):
@@ -90,12 +91,12 @@ def main(args):
     logging.debug("Looking for model files in %s..." % model_dir)
     output_graph_path, alphabet_path, lang_lm_path, lang_trie_path = wavTranscriber.resolve_models(model_dir)
     logging.debug("Loading alphabet from %s..." % alphabet_path)
-    alphabet = text.Alphabet(alphabet_path)
+    alphabet = Alphabet(alphabet_path)
 
     logging.debug("Loading original transcript from %s..." % args.transcript)
     with open(args.transcript, 'r') as transcript_file:
         original_transcript = transcript_file.read()
-    tc = text.TextCleaner(original_transcript,
+    tc = TextCleaner(original_transcript,
                           alphabet,
                           dashes_to_ws=not args.text_keep_dashes,
                           normalize_space=not args.text_keep_ws,
@@ -185,22 +186,22 @@ def main(args):
         with open(fragments_cache_path, 'w') as result_file:
             result_file.write(json.dumps(fragments))
 
-    ls = text.FuzzySearch(tc.clean_text)
+    search = FuzzySearch(tc.clean_text,
+                         max_candidates=args.align_max_candidates,
+                         candidate_threshold=args.align_candidate_threshold,
+                         snap_token=not args.align_no_snap_to_token,
+                         stretch_factor=args.align_stretch_fraction)
     start = 0
     result_fragments = []
     for fragment in fragments:
         time_start = fragment['time-start']
         time_length = fragment['time-length']
         fragment_transcript = fragment['transcript']
-        match, match_distance = ls.find_best(fragment_transcript,
-                                             max_candidates=args.align_max_candidates,
-                                             candidate_threshold=args.align_candidate_threshold,
-                                             snap_token=not args.align_no_snap_to_token,
-                                             stretch_factor=args.align_stretch_fraction)
+        match, match_distance = search.find_best(fragment_transcript)
         if match is not None:
             fragment_matched = tc.clean_text[match.start:match.end]
-            cer = text.levenshtein(fragment_transcript, fragment_matched)/len(fragment_matched)
-            wer = text.levenshtein(fragment_transcript.split(), fragment_matched.split())/len(fragment_matched.split())
+            cer = levenshtein(fragment_transcript, fragment_matched)/len(fragment_matched)
+            wer = levenshtein(fragment_transcript.split(), fragment_matched.split())/len(fragment_matched.split())
             if (args.output_min_cer and cer * 100.0 < args.output_min_cer) or \
                (args.output_max_cer and cer * 100.0 > args.output_max_cer) or \
                (args.output_min_wer and wer * 100.0 < args.output_min_wer) or \
