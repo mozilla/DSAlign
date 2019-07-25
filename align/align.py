@@ -193,6 +193,10 @@ def main(args):
                          stretch_factor=args.align_stretch_fraction)
     start = 0
     result_fragments = []
+
+    # DEBUG
+    fragments = fragments[14:15]
+
     for fragment in fragments:
         time_start = fragment['time-start']
         time_length = fragment['time-length']

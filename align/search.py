@@ -1,6 +1,6 @@
 from nltk import ngrams
 from text import levenshtein, TextRange
-from utils import circulate
+from utils import circulate, by_len
 
 
 class FuzzySearch(object):
@@ -29,45 +29,49 @@ class FuzzySearch(object):
     def get_missed_distance(self, missed):
         return self.word_distance('', ' '.join(missed)) * self.missed_penalty
 
-    def find_best_token_range(self, look_for, look_in, look_in_center=None):
+    def find_best_token_range(self, look_for, look_in, alignment=0):
         if len(look_for) == 0:
             return 0, (0, 0)
 
         if len(look_in) == 0:
             return self.get_missed_distance(look_for), (0, 0)
 
-        dc, i, j = self.find_similar_words(look_for,
-                                           look_in,
-                                           look_in_center=look_in_center)
+        dc, i, j = self.find_similar_words(look_for, look_in, alignment=alignment)
 
         look_for_left = look_for[:i]
         look_in_left = look_in[:j]
-        dl, il = self.find_best_token_range(look_for_left,
-                                            look_in_left,
-                                            look_in_center=len(look_in_left) - len(look_for_left) // 2)
+        dl, il = self.find_best_token_range(look_for_left, look_in_left, alignment=1 if alignment == 1 else 0)
         ls, le = il
         ml = look_in_left[le+1:]
         dml = self.get_missed_distance(ml)
 
         look_for_right = look_for[i+1:]
         look_in_right = look_in[j+1:]
-        dr, ir = self.find_best_token_range(look_for_right,
-                                            look_in_right,
-                                            look_in_center=len(look_for_right) // 2)
+        dr, ir = self.find_best_token_range(look_for_right, look_in_right, alignment=-1 if alignment == -1 else 0)
         rs, re = ir
         mr = look_in_right[:rs]
         dmr = self.get_missed_distance(mr)
 
-        start = ls
+        start = ls if le - ls > 0 else j
         end = j + 1 + re
+
+        print('Start: %d, End: %d' % (start, end))
 
         return (dl + dml + dc + dmr + dr) / (end - start), (start, end)
 
     def find_best_in_interval(self, look_for, start, stop):
-        token_look_for = look_for.split()
-        look_in_range = TextRange.token_at(self.text, start) + TextRange.token_at(self.text, stop)
+        tokens_look_for = look_for.split()
+        look_in_start_token = TextRange.token_at(self.text, start)
+        if len(look_in_start_token) == 0:
+            look_in_start_token = look_in_start_token.next_token()
+        look_in_end_token = TextRange.token_at(self.text, stop)
+        if len(look_in_end_token) == 0:
+            look_in_end_token = look_in_end_token.prev_token()
+        look_in_range = look_in_start_token + look_in_end_token
+        print('Searching for "%s"' % look_for)
+        print('Searching in  "%s"' % look_in_range.get_text())
         tokens_look_in = look_in_range.get_text().split()
-        distance, token_range = self.find_best_token_range(token_look_for, tokens_look_in)
+        distance, token_range = self.find_best_token_range(tokens_look_for, tokens_look_in)
         token_start, token_end = token_range
         text_start = look_in_range.start + len(''.join(tokens_look_in[:token_start])) + token_start
         text_end = text_start + len(' '.join(tokens_look_in[token_start:token_end]))
@@ -91,11 +95,12 @@ class FuzzySearch(object):
         last_window_grams = 0.1
         for window in candidate_windows[:self.max_candidates]:
             if windows[window] / last_window_grams < self.candidate_threshold:
+                print('Next candidate window below threshold')
                 break
             last_window_grams = windows[window]
-            interval_start = max(start,              int((window-0.5)*window_size))
-            interval_stop  = min(stop-len(look_for), int((window+0.5)*window_size))
-            interval_distance, interval = self.find_best_in_interval(look_for, start=interval_start, stop=interval_stop)
+            interval_start = max(start, int((window-0.5)*window_size))
+            interval_stop  = min(stop,  int((window+1.5)*window_size))
+            interval_distance, interval = self.find_best_in_interval(look_for, interval_start, interval_stop)
             if not best_interval or interval_distance < best_distance:
                 best_interval = interval
                 best_distance = interval_distance
@@ -112,26 +117,17 @@ class FuzzySearch(object):
     def find_similar_words(self,
                            look_for,
                            look_in,
-                           look_for_center=None,
-                           look_in_center=None,
-                           distance_threshold=0.15,
-                           len_threshold=5):
-        found_len = False
-        for i, wa in circulate(look_for, center=look_for_center):
-            if len(wa) > len_threshold:
-                found_len = True
-                for j, wb in circulate(look_in, center=look_in_center):
-                    d = self.word_distance(wa, wb)
-                    if d < distance_threshold:
-                        print('Accepted with distance %.2f: "%s" - "%s"' % (d, wa, wb))
-                        return d, i, j
-        if found_len:
-            distance_threshold *= 1.1
-            print('Trying to find word with distance threshold %.2f' % distance_threshold)
-        else:
-            len_threshold -= 1
-            print('Trying to find word with len threshold %d' % len_threshold)
+                           alignment=0,
+                           distance_threshold=0.10):
+        lli = len(look_in)
+        for i, wa in by_len(look_for):
+            for j, wb in by_len(look_in):
+                d = self.word_distance(wa, wb)
+                off = abs(lli//2 - j) if alignment == 0 else ((lli - j) if alignment > 0 else j)
+                panelty = off / (lli * len(look_for))
+                if d < distance_threshold + 8 * panelty:
+                    print('Accepted with distance %.2f: "%s" - "%s"' % (d, wa, wb))
+                    return d, i, j
         return self.find_similar_words(look_for,
                                        look_in,
-                                       distance_threshold=distance_threshold,
-                                       len_threshold=len_threshold)
+                                       distance_threshold=distance_threshold*1.1)

@@ -6,11 +6,16 @@ def circulate(items, center=None):
         center = min(max(center, 0), count - 1)
         yield center, items[center]
         for i in range(1, count):
-            print('ANOTHER')
+            #print('ANOTHER')
             if center + i < count:
                 yield center + i, items[center + i]
             if center - i >= 0:
                 yield center - i, items[center - i]
+
+
+def by_len(items):
+    indexed = list(enumerate(items))
+    return sorted(indexed, key=lambda e: len(e[1]), reverse=True)
 
 
 def greedy_minimum_search(a, b, compute, result_a=None, result_b=None):
