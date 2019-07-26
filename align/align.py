@@ -51,7 +51,7 @@ def main(args):
     align_group = parser.add_argument_group(title='Alignment algorithm options')
     align_group.add_argument('--align-max-candidates', type=int, required=False, default=10,
                              help='How many global 3gram match candidates are tested at max (default: 10)')
-    align_group.add_argument('--align-candidate-threshold', type=float, required=False, default=0.8,
+    align_group.add_argument('--align-candidate-threshold', type=float, required=False, default=0.5,
                              help='Factor for how many 3grams the next candidate should have at least ' +
                                   'compared to its predecessor (default: 0.8)')
     align_group.add_argument('--align-no-snap-to-token', action="store_true",
