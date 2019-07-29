@@ -2,19 +2,19 @@ from collections import Counter
 from nltk import ngrams
 from text import levenshtein, TextRange
 from utils import circulate, by_len
-
+import random
 
 class FuzzySearch(object):
     def __init__(self,
                  text,
                  max_candidates=10,
-                 candidate_threshold=0.8,
+                 candidate_threshold=0.92,
                  snap_token=True,
                  stretch_factor=1/3,
-                 match_score=2,
-                 mismatch_score=-2,
-                 delete_score=-1,
-                 insert_score=-1,
+                 match_score=3,
+                 mismatch_score=0,
+                 delete_score=-4,
+                 insert_score=-4,
                  similarities=None):
         self.text = text
         self.max_candidates = max_candidates
@@ -45,20 +45,22 @@ class FuzzySearch(object):
             return self.similarities[key]
         return self.match_score if a == b else self.mismatch_score
 
-    def nwmatch(self, a, b):
+    def sw_align(self, a, b):
         n, m = len(a), len(b)
-        f = [[0] * m] * n
-        for i in range(n):
-            f[i][0] = self.insert_score * i  # CHECK: correct order of delete and insert scores?
-        for j in range(m):
+        f = [[]] * (n + 1)
+        for i in range(0, n + 1):
+            f[i] = [0] * (m + 1)
+        for i in range(1, n + 1):
+            f[i][0] = self.insert_score * i
+        for j in range(1, m + 1):
             f[0][j] = self.delete_score * j
         max_score = 0
         start_i, start_j = 0, 0
-        for i in range(1, n):
-            for j in range(1, m):
-                match = f[i - 1][j - 1] + self.similarity(a[i], b[j])
-                delete = f[i - 1][j] + self.delete_score
+        for i in range(1, n + 1):
+            for j in range(1, m + 1):
+                match = f[i - 1][j - 1] + self.similarity(a[i - 1], b[j - 1])
                 insert = f[i][j - 1] + self.insert_score
+                delete = f[i - 1][j] + self.delete_score
                 score = max(0, match, insert, delete)
                 f[i][j] = score
                 if score > max_score:
@@ -66,36 +68,22 @@ class FuzzySearch(object):
                     start_i, start_j = i, j
 
         substitutions = Counter()
-        score = 0
-        match_start, match_len = -1, 0
         i, j = start_i, start_j
-        align_a, align_b = '', ''
         while (j > 0 or i > 0) and f[i][j] != 0:
-            if i > 0 and j > 0 and f[i][j] == (f[i - 1][j - 1] + self.similarity(a[i], b[j])):
-                align_a = a[i] + align_a
-                align_b = b[j] + align_b
-                score += self.similarity(a[i], b[j])
-                substitutions[FuzzySearch.similarity_key(a[i], b[j])] += 1
+            ca, cb = a[i - 1] if i > 0 else ' ', b[j - 1] if j > 0 else ' '
+            s = self.similarity(ca, cb)
+            if i > 0 and j > 0 and f[i][j] == (f[i - 1][j - 1] + s):
+                if ca != cb:
+                    substitutions[FuzzySearch.similarity_key(ca, cb)] += 1
                 i, j = i - 1, j - 1
             elif i > 0 and f[i][j] == (f[i - 1][j] + self.delete_score):
-                print('D')
-                align_a = a[i] + align_a
-                align_b = '-' + align_b
-                score += self.delete_score
                 i -= 1
             elif j > 0 and f[i][j] == (f[i][j - 1] + self.insert_score):
-                print('I')
-                align_a = '-' + align_a
-                align_b = b[j] + align_b
-                score += self.insert_score
                 j -= 1
             else:
-                print('Warum?', i, j, self.similarity(a[i], b[j]), f[i-1][j-1], f[i-1][j], f[i][j-1], f[i][j])
-
-        print(align_a)
-        print(align_b)
-
-        return match_start, match_len, score, substitutions
+                raise Exception('Smith–Waterman failure')
+        start = j - 1
+        return start, start_j - start, f[start_i][start_j], substitutions
 
     def find_best(self, look_for, start=0, stop=-1):
         stop = len(self.text) if stop < 0 else stop
@@ -111,20 +99,22 @@ class FuzzySearch(object):
                     windows[window] = (windows[window] + 1) if window in windows else 1
         candidate_windows = sorted(windows.keys(), key=lambda w: windows[w], reverse=True)
         best_interval = None
+        best_substitutions = None
         best_score = -10000000000
         last_window_grams = 0.1
         for window in candidate_windows[:self.max_candidates]:
-            if windows[window] / last_window_grams < self.candidate_threshold:
+            ngram_factor = (windows[window] / last_window_grams)
+            if ngram_factor < self.candidate_threshold:
                 break
             last_window_grams = windows[window]
             interval_start = max(start, int((window-0.5)*window_size))
             interval_end   = min(stop,  int((window+1.5)*window_size))
             interval_text = self.text[interval_start:interval_end]
-            match_start, match_len, score, substitutions = self.nwmatch(look_for, interval_text)
+            match_start, match_len, score, substitutions = self.sw_align(look_for, interval_text)
             match_start += interval_start
             interval = TextRange(self.text, match_start, match_start + match_len)
             if score > best_score:
-                print('new best')
                 best_interval = interval
                 best_score = score
-        return best_interval, best_score
+                best_substitutions = substitutions
+        return best_interval, best_score, best_substitutions

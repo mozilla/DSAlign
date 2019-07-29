@@ -7,6 +7,7 @@ import subprocess
 import os.path as path
 import numpy as np
 import wavTranscriber
+from collections import Counter
 from search import FuzzySearch
 from text import Alphabet, TextCleaner, levenshtein
 
@@ -51,7 +52,7 @@ def main(args):
     align_group = parser.add_argument_group(title='Alignment algorithm options')
     align_group.add_argument('--align-max-candidates', type=int, required=False, default=10,
                              help='How many global 3gram match candidates are tested at max (default: 10)')
-    align_group.add_argument('--align-candidate-threshold', type=float, required=False, default=0.5,
+    align_group.add_argument('--align-candidate-threshold', type=float, required=False, default=0.92,
                              help='Factor for how many 3grams the next candidate should have at least ' +
                                   'compared to its predecessor (default: 0.8)')
     align_group.add_argument('--align-no-snap-to-token', action="store_true",
@@ -193,17 +194,17 @@ def main(args):
                          stretch_factor=args.align_stretch_fraction)
     start = 0
     result_fragments = []
-
-    # DEBUG
-    fragments = fragments[14:15]
+    substitutions = Counter()
 
     for fragment in fragments:
         time_start = fragment['time-start']
         time_length = fragment['time-length']
         fragment_transcript = fragment['transcript']
-        match, match_distance = search.find_best(fragment_transcript)
+        match, match_distance, match_substitutions = search.find_best(fragment_transcript)
         if match is not None:
+            substitutions += match_substitutions
             fragment_matched = tc.clean_text[match.start:match.end]
+            score = match_distance/len(fragment_matched)
             cer = levenshtein(fragment_transcript, fragment_matched)/len(fragment_matched)
             wer = levenshtein(fragment_transcript.split(), fragment_matched.split())/len(fragment_matched.split())
             if (args.output_min_cer and cer * 100.0 < args.output_min_cer) or \
@@ -220,6 +221,7 @@ def main(args):
                 'time-length': time_length,
                 'text-start':  original_start,
                 'text-length': original_end-original_start,
+                'score':       score,
                 'cer':         cer,
                 'wer':         wer
             }
@@ -230,7 +232,7 @@ def main(args):
             if args.output_aligned_raw:
                 result_fragment['aligned-raw'] = original_transcript[original_start:original_end]
             result_fragments.append(result_fragment)
-            logging.debug('Sample with WER %.2f CER %.2f' % (wer * 100, cer * 100))
+            logging.debug('Sample with WER %.2f CER %.2f Score %f' % (wer * 100, cer * 100, score))
             logging.debug('- T:  ' + args.text_context * ' ' + '%s' % fragment_transcript)
             logging.debug('- O: %s|%s|%s' % (
                 tc.clean_text[match.start-args.text_context:match.start],
@@ -250,6 +252,7 @@ def main(args):
     logging.info('Aligned %d fragments.' % len(result_fragments))
     skipped = len(fragments)-len(result_fragments)
     logging.info('Skipped %d fragments (%.2f%%).' % (skipped, skipped*100.0/len(fragments)))
+    print(substitutions)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
