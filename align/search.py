@@ -1,29 +1,27 @@
 from collections import Counter
 from nltk import ngrams
-from text import levenshtein, TextRange
-from utils import circulate, by_len
-import random
+from text import TextRange
+
 
 class FuzzySearch(object):
     def __init__(self,
                  text,
                  max_candidates=10,
                  candidate_threshold=0.92,
-                 snap_token=True,
-                 stretch_factor=1/3,
-                 match_score=3,
-                 mismatch_score=0,
-                 delete_score=-4,
-                 insert_score=-4,
+                 snap_to_word=True,
+                 snap_radius=0,
+                 match_score=100,
+                 mismatch_score=-100,
+                 gap_score=-100,
                  similarities=None):
         self.text = text
         self.max_candidates = max_candidates
         self.candidate_threshold = candidate_threshold
-        self.snap_token = snap_token
+        self.snap_to_word = snap_to_word
+        self.snap_radius = snap_radius
         self.match_score = match_score
         self.mismatch_score = mismatch_score
-        self.delete_score = delete_score
-        self.insert_score = insert_score
+        self.gap_score = gap_score
         self.similarities = similarities
         self.ngrams = {}
         for i, ngram in enumerate(ngrams(' ' + text + ' ', 3)):
@@ -47,38 +45,38 @@ class FuzzySearch(object):
 
     def sw_align(self, a, b):
         n, m = len(a), len(b)
-        f = [[]] * (n + 1)
+        # building scoring matrix
+        f = [[0]] * (n + 1)
         for i in range(0, n + 1):
             f[i] = [0] * (m + 1)
         for i in range(1, n + 1):
-            f[i][0] = self.insert_score * i
+            f[i][0] = self.gap_score * i
         for j in range(1, m + 1):
-            f[0][j] = self.delete_score * j
+            f[0][j] = self.gap_score * j
         max_score = 0
         start_i, start_j = 0, 0
         for i in range(1, n + 1):
             for j in range(1, m + 1):
                 match = f[i - 1][j - 1] + self.similarity(a[i - 1], b[j - 1])
-                insert = f[i][j - 1] + self.insert_score
-                delete = f[i - 1][j] + self.delete_score
+                insert = f[i][j - 1] + self.gap_score
+                delete = f[i - 1][j] + self.gap_score
                 score = max(0, match, insert, delete)
                 f[i][j] = score
                 if score > max_score:
                     max_score = score
                     start_i, start_j = i, j
-
+        # backtracking
         substitutions = Counter()
         i, j = start_i, start_j
         while (j > 0 or i > 0) and f[i][j] != 0:
             ca, cb = a[i - 1] if i > 0 else ' ', b[j - 1] if j > 0 else ' '
             s = self.similarity(ca, cb)
             if i > 0 and j > 0 and f[i][j] == (f[i - 1][j - 1] + s):
-                if ca != cb:
-                    substitutions[FuzzySearch.similarity_key(ca, cb)] += 1
+                substitutions[FuzzySearch.similarity_key(ca, cb)] += 1
                 i, j = i - 1, j - 1
-            elif i > 0 and f[i][j] == (f[i - 1][j] + self.delete_score):
+            elif i > 0 and f[i][j] == (f[i - 1][j] + self.gap_score):
                 i -= 1
-            elif j > 0 and f[i][j] == (f[i][j - 1] + self.insert_score):
+            elif j > 0 and f[i][j] == (f[i][j - 1] + self.gap_score):
                 j -= 1
             else:
                 raise Exception('Smith–Waterman failure')
