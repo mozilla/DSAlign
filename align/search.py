@@ -12,8 +12,8 @@ class FuzzySearch(object):
                  snap_radius=0,
                  match_score=100,
                  mismatch_score=-100,
-                 gap_score=-100,
-                 similarities=None):
+                 gap_score=-40,
+                 letter_similarities=None):
         self.text = text
         self.max_candidates = max_candidates
         self.candidate_threshold = candidate_threshold
@@ -22,7 +22,7 @@ class FuzzySearch(object):
         self.match_score = match_score
         self.mismatch_score = mismatch_score
         self.gap_score = gap_score
-        self.similarities = similarities
+        self.letter_similarities = letter_similarities
         self.ngrams = {}
         for i, ngram in enumerate(ngrams(' ' + text + ' ', 3)):
             if ngram in self.ngrams:
@@ -32,18 +32,19 @@ class FuzzySearch(object):
             ngram_bucket.append(i)
 
     @staticmethod
-    def similarity_key(a, b):
+    def char_pair(a, b):
         if a > b:
             a, b = b, a
         return '' + a + b
 
-    def similarity(self, a, b):
-        key = FuzzySearch.similarity_key(a, b)
-        if self.similarities and key in self.similarities:
-            return self.similarities[key]
+    def char_similarity(self, a, b):
+        key = FuzzySearch.char_pair(a, b)
+        if self.letter_similarities and key in self.letter_similarities:
+            return self.letter_similarities[key]
         return self.match_score if a == b else self.mismatch_score
 
-    def sw_align(self, a, b):
+    def sw_align(self, a, start, end):
+        b = self.text[start:end]
         n, m = len(a), len(b)
         # building scoring matrix
         f = [[0]] * (n + 1)
@@ -57,7 +58,7 @@ class FuzzySearch(object):
         start_i, start_j = 0, 0
         for i in range(1, n + 1):
             for j in range(1, m + 1):
-                match = f[i - 1][j - 1] + self.similarity(a[i - 1], b[j - 1])
+                match = f[i - 1][j - 1] + self.char_similarity(a[i - 1], b[j - 1])
                 insert = f[i][j - 1] + self.gap_score
                 delete = f[i - 1][j] + self.gap_score
                 score = max(0, match, insert, delete)
@@ -69,10 +70,8 @@ class FuzzySearch(object):
         substitutions = Counter()
         i, j = start_i, start_j
         while (j > 0 or i > 0) and f[i][j] != 0:
-            ca, cb = a[i - 1] if i > 0 else ' ', b[j - 1] if j > 0 else ' '
-            s = self.similarity(ca, cb)
-            if i > 0 and j > 0 and f[i][j] == (f[i - 1][j - 1] + s):
-                substitutions[FuzzySearch.similarity_key(ca, cb)] += 1
+            if i > 0 and j > 0 and f[i][j] == (f[i - 1][j - 1] + self.char_similarity(a[i - 1], b[j - 1])):
+                substitutions[FuzzySearch.char_pair(a[i - 1], b[j - 1])] += 1
                 i, j = i - 1, j - 1
             elif i > 0 and f[i][j] == (f[i - 1][j] + self.gap_score):
                 i -= 1
@@ -80,8 +79,15 @@ class FuzzySearch(object):
                 j -= 1
             else:
                 raise Exception('Smith–Waterman failure')
-        start = j - 1
-        return start, start_j - start, f[start_i][start_j], substitutions
+        return start + j - 1, start + start_j, f[start_i][start_j], substitutions
+
+    def snap(self, start, end):
+        start_token = TextRange.token_at(self.text, start)
+        if len(start_token) == 0:
+            start_token = TextRange.token_at(self.text, start + 1)
+        end_token = TextRange.token_at(self.text, max(0, end - 1))
+        snap_range = start_token + end_token
+        return snap_range.start, snap_range.end
 
     def find_best(self, look_for, start=0, stop=-1):
         stop = len(self.text) if stop < 0 else stop
@@ -105,14 +111,13 @@ class FuzzySearch(object):
             if ngram_factor < self.candidate_threshold:
                 break
             last_window_grams = windows[window]
-            interval_start = max(start, int((window-0.5)*window_size))
-            interval_end   = min(stop,  int((window+1.5)*window_size))
-            interval_text = self.text[interval_start:interval_end]
-            match_start, match_len, score, substitutions = self.sw_align(look_for, interval_text)
-            match_start += interval_start
-            interval = TextRange(self.text, match_start, match_start + match_len)
+            interval_start = max(start, int((window - 0.5) * window_size))
+            interval_end = min(stop,  int((window + 1.5) * window_size))
+            interval_start, interval_end, score, substitutions = self.sw_align(look_for, interval_start, interval_end)
+            if self.snap_to_word:
+                interval_start, interval_end = self.snap(interval_start, interval_end)
             if score > best_score:
-                best_interval = interval
+                best_interval = TextRange(self.text, interval_start, interval_end)
                 best_score = score
                 best_substitutions = substitutions
         return best_interval, best_score, best_substitutions

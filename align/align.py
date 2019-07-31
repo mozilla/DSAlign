@@ -44,7 +44,7 @@ def main(args):
     stt_group.add_argument('--stt-no-own-lm', action="store_true",
                            help='Deactivates creation of individual language models per document.' +
                                 'Uses the one from model dir instead.')
-    stt_group.add_argument('--stt-min-duration', type=int, required=False, default=4,
+    stt_group.add_argument('--stt-min-duration', type=int, required=False, default=100,
                            help='Minimum speech fragment duration in milliseconds to translate (default: 100)')
     stt_group.add_argument('--stt-max-duration', type=int, required=False,
                            help='Maximum speech fragment duration in milliseconds to translate (default: no limit)')
@@ -67,8 +67,8 @@ def main(args):
                              help='Matching score for Smith-Waterman alignment (default: 100)')
     align_group.add_argument('--align-mismatch-score', type=int, required=False, default=-100,
                              help='Mismatch score for Smith-Waterman alignment (default: -100)')
-    align_group.add_argument('--align-gap-score', type=int, required=False, default=-100,
-                             help='Gap score for Smith-Waterman alignment (default: -100)')
+    align_group.add_argument('--align-gap-score', type=int, required=False, default=-40,
+                             help='Gap score for Smith-Waterman alignment (default: -40)')
     align_group.add_argument('--align-no-snap', action="store_true",
                              help='Deactivates snapping to word boundaries at the beginning and end of each phrase')
     align_group.add_argument('--align-snap-radius', type=int, required=False, default=0,
@@ -327,7 +327,6 @@ def main(args):
     logging.info('Skipped %d fragments (%.2f%%):' % (skipped, skipped * 100.0 / len(fragments)))
     for key, number in statistics.most_common():
         logging.info(' - %s: %d' % (key, number))
-    print(substitutions)
 
 if __name__ == '__main__':
     main(sys.argv[1:])

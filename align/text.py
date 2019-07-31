@@ -2,7 +2,8 @@ from __future__ import absolute_import, division, print_function
 
 import codecs
 from six.moves import range
-
+from collections import Counter
+from nltk import ngrams
 
 class Alphabet(object):
     def __init__(self, config_file):
@@ -119,6 +120,31 @@ class TextRange(object):
 
     def __len__(self):
         return self.end-self.start
+
+
+def similarity(a, b):
+    if a == b:
+        return 1.0
+    n, m = len(a), len(b)
+    if n < m:
+        a, b, n, m = b, a, m, n
+    ca, cb = Counter(), Counter()
+    counters = [ca, cb]
+    for index, s in enumerate([a, b]):
+        for w in range(1, 4):
+            for ng in ngrams(s, w):
+                counters[index][''.join(ng)] += 1
+    overall = 0
+    print(ca.most_common())
+    for key in set(ca.keys()):
+        overall += ca[key] * len(key)
+    score = 0
+    for key in set(ca.keys()) & set(cb.keys()):
+        v = min(ca[key], cb[key])
+        print('Key "%s": %d' % (key, v))
+        score += len(key) * v
+    print(overall)
+    return score / overall
 
 
 # The following code is from: http://hetland.org/coding/python/levenshtein.py
