@@ -1,6 +1,5 @@
 from collections import Counter
-from nltk import ngrams
-from text import TextRange
+from text import TextRange, ngrams
 
 
 class FuzzySearch(object):
@@ -12,7 +11,7 @@ class FuzzySearch(object):
                  snap_radius=0,
                  match_score=100,
                  mismatch_score=-100,
-                 gap_score=-40,
+                 gap_score=-100,
                  letter_similarities=None):
         self.text = text
         self.max_candidates = max_candidates
@@ -111,8 +110,8 @@ class FuzzySearch(object):
             if ngram_factor < self.candidate_threshold:
                 break
             last_window_grams = windows[window]
-            interval_start = max(start, int((window - 0.5) * window_size))
-            interval_end = min(stop,  int((window + 1.5) * window_size))
+            interval_start = max(start, int((window - 1) * window_size))
+            interval_end = min(stop,  int((window + 2) * window_size))
             interval_start, interval_end, score, substitutions = self.sw_align(look_for, interval_start, interval_end)
             if self.snap_to_word:
                 interval_start, interval_end = self.snap(interval_start, interval_end)

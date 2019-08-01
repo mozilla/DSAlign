@@ -3,7 +3,7 @@ from __future__ import absolute_import, division, print_function
 import codecs
 from six.moves import range
 from collections import Counter
-from nltk import ngrams
+
 
 class Alphabet(object):
     def __init__(self, config_file):
@@ -122,29 +122,72 @@ class TextRange(object):
         return self.end-self.start
 
 
-def similarity(a, b):
-    if a == b:
-        return 1.0
-    n, m = len(a), len(b)
-    if n < m:
-        a, b, n, m = b, a, m, n
+def ngrams(s, size):
+    """
+    Lists all appearances of all N-grams of a string from left to right.
+    :param s: String to decompose
+    :param size: N-gram size
+    :return: Produces strings representing all N-grams
+    """
+    window = len(s) - size
+    if window < 1 or size < 1:
+        if window == 0:
+            yield s
+        raise StopIteration
+    for i in range(0, window + 1):
+        yield s[i:i + size]
+
+
+def weighted_ngrams(s, size, direction=0):
+    """
+    Lists all appearances of all N-grams of a string from left to right together with a positional weight value.
+    The positional weight progresses quadratically.
+    :param s: String to decompose
+    :param size: N-gram size
+    :param direction: Order of assigning positional weights to N-grams:
+        direction < 0: Weight of first N-gram is 1.0 and of last one 0.0
+        direction > 0: Weight of first N-gram is 0.0 and of last one 1.0
+        direction == 0: Weight of center N-gram(s) near or equal 0, weight of first and last N-gram 1.0
+    :return: Produces (string, float) tuples representing the N-gram along with its assigned positional weight value
+    """
+    direction = -1 if direction < 0 else (1 if direction > 0 else 0)
+    window = len(s) - size
+    if window < 1 or size < 1:
+        if window == 0:
+            yield s, 1
+        raise StopIteration
+    for i in range(0, window + 1):
+        c = (i + window * (direction - 1) / 2) / window
+        yield s[i:i + size], c * c * (4 - abs(direction) * 3)
+
+
+def similarity(a, b, direction=0, min_ngram_size=1, max_ngram_size=3, size_factor=1, position_factor=1):
+    """
+    Computes similarity value of two strings ranging from 0.0 (completely different) to 1.0 (completely equal).
+    Counts intersection of weighted N-gram sets of both strings.
+    :param a: String to compare
+    :param b: String to compare
+    :param direction: Order of equality importance:
+        direction < 0: Left ends of strings more important to be similar
+        direction > 0: Right ends of strings more important to be similar
+        direction == 0: Left and right ends more important to be similar than center parts
+    :param min_ngram_size: Minimum N-gram size to take into account
+    :param max_ngram_size: Maximum N-gram size to take into account
+    :param size_factor: Importance factor of the N-gram size (compared to the positional importance).
+    :param position_factor: Importance factor of the N-gram position (compared to the size importance)
+    :return: Number between 0.0 (completely different) and 1.0 (completely equal)
+    """
+    if len(a) < len(b):
+        a, b = b, a
     ca, cb = Counter(), Counter()
-    counters = [ca, cb]
-    for index, s in enumerate([a, b]):
-        for w in range(1, 4):
-            for ng in ngrams(s, w):
-                counters[index][''.join(ng)] += 1
-    overall = 0
-    print(ca.most_common())
-    for key in set(ca.keys()):
-        overall += ca[key] * len(key)
+    for s, c in [(a, ca), (b, cb)]:
+        for size in range(min_ngram_size, max_ngram_size + 1):
+            for ng, position_weight in weighted_ngrams(s, size, direction=direction):
+                c[ng] += size * size_factor + position_weight * position_factor
     score = 0
     for key in set(ca.keys()) & set(cb.keys()):
-        v = min(ca[key], cb[key])
-        print('Key "%s": %d' % (key, v))
-        score += len(key) * v
-    print(overall)
-    return score / overall
+        score += min(ca[key], cb[key])
+    return score / sum(ca.values())
 
 
 # The following code is from: http://hetland.org/coding/python/levenshtein.py

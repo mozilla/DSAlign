@@ -67,8 +67,8 @@ def main(args):
                              help='Matching score for Smith-Waterman alignment (default: 100)')
     align_group.add_argument('--align-mismatch-score', type=int, required=False, default=-100,
                              help='Mismatch score for Smith-Waterman alignment (default: -100)')
-    align_group.add_argument('--align-gap-score', type=int, required=False, default=-40,
-                             help='Gap score for Smith-Waterman alignment (default: -40)')
+    align_group.add_argument('--align-gap-score', type=int, required=False, default=-100,
+                             help='Gap score for Smith-Waterman alignment (default: -100)')
     align_group.add_argument('--align-no-snap', action="store_true",
                              help='Deactivates snapping to word boundaries at the beginning and end of each phrase')
     align_group.add_argument('--align-snap-radius', type=int, required=False, default=0,
