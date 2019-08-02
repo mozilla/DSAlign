@@ -1,5 +1,5 @@
 from collections import Counter
-from text import TextRange, ngrams
+from text import TextRange, ngrams, similarity
 
 
 class FuzzySearch(object):
@@ -9,6 +9,10 @@ class FuzzySearch(object):
                  candidate_threshold=0.92,
                  snap_to_word=True,
                  snap_radius=0,
+                 min_ngram_size=1,
+                 max_ngram_size=3,
+                 size_factor=1,
+                 position_factor=3,
                  match_score=100,
                  mismatch_score=-100,
                  gap_score=-100,
@@ -18,6 +22,10 @@ class FuzzySearch(object):
         self.candidate_threshold = candidate_threshold
         self.snap_to_word = snap_to_word
         self.snap_radius = snap_radius
+        self.min_ngram_size = min_ngram_size
+        self.max_ngram_size = max_ngram_size
+        self.size_factor = size_factor
+        self.position_factor = position_factor
         self.match_score = match_score
         self.mismatch_score = mismatch_score
         self.gap_score = gap_score
@@ -80,11 +88,40 @@ class FuzzySearch(object):
                 raise Exception('Smith–Waterman failure')
         return start + j - 1, start + start_j, f[start_i][start_j], substitutions
 
-    def snap(self, start, end):
+    def phrase_similarity(self, a, b, direction):
+        return similarity(a,
+                          b,
+                          direction=direction,
+                          min_ngram_size=self.min_ngram_size,
+                          max_ngram_size=self.max_ngram_size,
+                          size_factor=self.size_factor,
+                          position_factor=self.position_factor)
+
+    def extend(self, target, start_token, direction):
+        best_similarity = 0
+        current_token = best_token = start_token
+        for i in range(self.snap_radius + 1):
+            current_similarity = self.phrase_similarity(current_token.get_text(), target, direction)
+            if current_similarity > best_similarity:
+                best_similarity = current_similarity
+                best_token = current_token
+            current_similarity = self.phrase_similarity((current_token + start_token).get_text(), target, direction)
+            if current_similarity > best_similarity:
+                best_similarity = current_similarity
+                best_token = current_token
+            current_token = current_token.neighbour_token(direction)
+        return best_token
+
+    def snap(self, look_for, start, end):
         start_token = TextRange.token_at(self.text, start)
         if len(start_token) == 0:
             start_token = TextRange.token_at(self.text, start + 1)
         end_token = TextRange.token_at(self.text, max(0, end - 1))
+        if self.snap_radius > 0:
+            look_for = look_for.split(' ')
+            lf_start, lf_end = look_for[0], look_for[-1]
+            start_token = self.extend(lf_start, start_token, -1)
+            end_token = self.extend(lf_end, end_token, 1)
         snap_range = start_token + end_token
         return snap_range.start, snap_range.end
 
@@ -114,7 +151,7 @@ class FuzzySearch(object):
             interval_end = min(stop,  int((window + 2) * window_size))
             interval_start, interval_end, score, substitutions = self.sw_align(look_for, interval_start, interval_end)
             if self.snap_to_word:
-                interval_start, interval_end = self.snap(interval_start, interval_end)
+                interval_start, interval_end = self.snap(look_for, interval_start, interval_end)
             if score > best_score:
                 best_interval = TextRange(self.text, interval_start, interval_end)
                 best_score = score

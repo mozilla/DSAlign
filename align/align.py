@@ -74,6 +74,14 @@ def main(args):
     align_group.add_argument('--align-snap-radius', type=int, required=False, default=0,
                              help='How many words to look up to the left and right for snapping to word ' +
                                   'boundaries at the beginning and end of each phrase')
+    align_group.add_argument('--align-min-ngram-size', type=int, required=False, default=1,
+                             help='Minimum N-gram size for weighted N-gram similarity during snapping (default: 1)')
+    align_group.add_argument('--align-max-ngram-size', type=int, required=False, default=3,
+                             help='Maximum N-gram size for weighted N-gram similarity during snapping (default: 3)')
+    align_group.add_argument('--align-ngram-size-factor', type=int, required=False, default=1,
+                             help='Size weight for weighted N-gram similarity during snapping (default: 1)')
+    align_group.add_argument('--align-ngram-position-factor', type=int, required=False, default=3,
+                             help='Position weight for weighted N-gram similarity during snapping (default: 3)')
     align_group.add_argument('--align-min-length', type=int, required=False, default=4,
                              help='Minimum STT phrase length to align (default: 4)')
     align_group.add_argument('--align-max-length', type=int, required=False,
@@ -86,14 +94,22 @@ def main(args):
                               help='Writes clean aligned original transcripts to result file')
     output_group.add_argument('--output-aligned-raw', action="store_true",
                               help='Writes raw aligned original transcripts to result file')
+    output_group.add_argument('--output-wng-min-ngram-size', type=int, required=False, default=1,
+                              help='Minimum N-gram size for weighted N-gram similarity filter (default: 1)')
+    output_group.add_argument('--output-wng-max-ngram-size', type=int, required=False, default=3,
+                              help='Maximum N-gram size for weighted N-gram similarity filter (default: 3)')
+    output_group.add_argument('--output-wng-ngram-size-factor', type=int, required=False, default=1,
+                              help='Size weight for weighted N-gram similarity filter (default: 1)')
+    output_group.add_argument('--output-wng-ngram-position-factor', type=int, required=False, default=3,
+                              help='Position weight for weighted N-gram similarity filter (default: 3)')
 
     named_numbers = {
-        'tlen': ('transcript length',            int,   None),
-        'mlen': ('match length',                 int,   None),
-        'SWS':  ('Smith-Waterman score',         float, 'From 0.0 (not equal at all) to 100.0+ (pretty equal)'),
-        'WNG':  ('weighted N-gram intersection', float, 'From 0.0 (not equal at all) to 100.0 (totally equal)'),
-        'CER':  ('character error rate',         float, 'From 0.0 (no different words) to 100.0+ (total miss)'),
-        'WER':  ('word error rate',              float, 'From 0.0 (no wrong characters) to 100.0+ (total miss)')
+        'tlen': ('transcript length',          int,   None),
+        'mlen': ('match length',               int,   None),
+        'SWS':  ('Smith-Waterman score',       float, 'From 0.0 (not equal at all) to 100.0+ (pretty equal)'),
+        'WNG':  ('weighted N-gram similarity', float, 'From 0.0 (not equal at all) to 100.0 (totally equal)'),
+        'CER':  ('character error rate',       float, 'From 0.0 (no different words) to 100.0+ (total miss)'),
+        'WER':  ('word error rate',            float, 'From 0.0 (no wrong characters) to 100.0+ (total miss)')
     }
 
     for short in named_numbers.keys():
@@ -225,10 +241,14 @@ def main(args):
                          max_candidates=args.align_max_candidates,
                          candidate_threshold=args.align_candidate_threshold,
                          snap_to_word=not args.align_no_snap,
-                         snap_radius=not args.align_snap_radius,
+                         snap_radius=args.align_snap_radius,
                          match_score=args.align_match_score,
                          mismatch_score=args.align_mismatch_score,
-                         gap_score=args.align_gap_score)
+                         gap_score=args.align_gap_score,
+                         min_ngram_size=args.align_min_ngram_size,
+                         max_ngram_size=args.align_max_ngram_size,
+                         size_factor=args.align_ngram_size_factor,
+                         position_factor=args.align_ngram_position_factor)
     result_fragments = []
     substitutions = Counter()
     statistics = Counter()
@@ -298,16 +318,22 @@ def main(args):
             continue
 
         if should_skip('WNG', index, sample_numbers,
-                       lambda: 100 * similarity(fragment_matched, fragment_transcript)):
+                       lambda: 100 * similarity(fragment_matched,
+                                                fragment_transcript,
+                                                min_ngram_size=args.output_wng_min_ngram_size,
+                                                max_ngram_size=args.output_wng_max_ngram_size,
+                                                size_factor=args.output_wng_ngram_size_factor,
+                                                position_factor=args.output_wng_ngram_position_factor)):
             continue
 
         if should_skip('CER', index, sample_numbers,
-                       lambda: 100 * levenshtein(fragment_transcript, fragment_matched) / len(fragment_matched)):
+                       lambda: 100 * levenshtein(fragment_transcript, fragment_matched) /
+                               len(fragment_matched)):
             continue
 
         if should_skip('WER', index, sample_numbers,
-                       lambda: 100 * levenshtein(fragment_transcript.split(),
-                                                 fragment_matched.split())/len(fragment_matched.split())):
+                       lambda: 100 * levenshtein(fragment_transcript.split(), fragment_matched.split()) /
+                               len(fragment_matched.split())):
             continue
 
         result_fragments.append(result_fragment)
@@ -333,6 +359,7 @@ def main(args):
     logging.info('Skipped %d fragments (%.2f%%):' % (skipped, skipped * 100.0 / len(fragments)))
     for key, number in statistics.most_common():
         logging.info(' - %s: %d' % (key, number))
+
 
 if __name__ == '__main__':
     main(sys.argv[1:])
