@@ -12,7 +12,7 @@ class FuzzySearch(object):
                  match_score=100,
                  mismatch_score=-100,
                  gap_score=-100,
-                 letter_similarities=None):
+                 char_similarities=None):
         self.text = text
         self.max_candidates = max_candidates
         self.candidate_threshold = candidate_threshold
@@ -21,7 +21,7 @@ class FuzzySearch(object):
         self.match_score = match_score
         self.mismatch_score = mismatch_score
         self.gap_score = gap_score
-        self.letter_similarities = letter_similarities
+        self.char_similarities = char_similarities
         self.ngrams = {}
         for i, ngram in enumerate(ngrams(' ' + text + ' ', 3)):
             if ngram in self.ngrams:
@@ -38,8 +38,8 @@ class FuzzySearch(object):
 
     def char_similarity(self, a, b):
         key = FuzzySearch.char_pair(a, b)
-        if self.letter_similarities and key in self.letter_similarities:
-            return self.letter_similarities[key]
+        if self.char_similarities and key in self.char_similarities:
+            return self.char_similarities[key]
         return self.match_score if a == b else self.mismatch_score
 
     def sw_align(self, a, start, end):
