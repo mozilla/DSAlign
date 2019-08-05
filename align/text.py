@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import codecs
 from six.moves import range
 from collections import Counter
+from utils import enweight
 
 
 class Alphabet(object):
@@ -150,15 +151,7 @@ def weighted_ngrams(s, size, direction=0):
         direction == 0: Weight of center N-gram(s) near or equal 0, weight of first and last N-gram 1.0
     :return: Produces (string, float) tuples representing the N-gram along with its assigned positional weight value
     """
-    direction = -1 if direction < 0 else (1 if direction > 0 else 0)
-    window = len(s) - size
-    if window < 1 or size < 1:
-        if window == 0:
-            yield s, 1
-        raise StopIteration
-    for i in range(0, window + 1):
-        c = (i + window * (direction - 1) / 2) / window
-        yield s[i:i + size], c * c * (4 - abs(direction) * 3)
+    return enweight(ngrams(s, size), direction=direction)
 
 
 def similarity(a, b, direction=0, min_ngram_size=1, max_ngram_size=3, size_factor=1, position_factor=1):

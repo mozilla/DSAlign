@@ -10,6 +10,7 @@ import wavTranscriber
 from collections import Counter
 from search import FuzzySearch
 from text import Alphabet, TextCleaner, levenshtein, similarity
+from utils import enweight
 
 
 def main(args):
@@ -254,6 +255,8 @@ def main(args):
     statistics = Counter()
     end_fragments = (args.start + args.num_samples) if args.num_samples else len(fragments)
     fragments = fragments[args.start:end_fragments]
+    for index, fragment in enumerate(fragments):
+        fragment['index'] = index
 
     def skip(index, reason):
         logging.info('Fragment {}: {}'.format(index, reason))
@@ -280,6 +283,39 @@ def main(args):
                 return True
         return False
 
+
+    def split_match(fragments, start=0, end=-1):
+        print('From {} to {}...'.format(start, end))
+        n = len(fragments)
+        if n == 0:
+            return
+        best_weight = 0
+        best_index = None
+        best_match = None
+        weighted_fragments = map(lambda fw: (fw[0], (2.0 - fw[1]) * len(fw[0][1]['transcript'])), enweight(enumerate(fragments)))
+        for fragment, weight in sorted(weighted_fragments, key=lambda fw: fw[1], reverse=True):
+            index, fragment = fragment
+            match = search.find_best(fragment['transcript'], start=start, end=end)
+            _, sws_score, _ = match
+            weight = weight * sws_score
+            if weight > best_weight:
+                best_weight = weight
+                best_index = index
+                best_match = match
+            break
+        if best_match:
+            fragment = fragments[best_index]
+            match_interval, _, _ = best_match
+            match_start, match_end = match_interval.start, match_interval.end
+            fragment['match'] = best_match
+            split_match(fragments[0:index], start=start, end=match_start)
+            #print(match_interval.get_text())
+            split_match(fragments[index + 1:], start=match_end, end=end)
+        else:
+            print('Oh no! {} {}'.format(weight, sws_score))
+
+    split_match(fragments)
+
     for index, fragment in enumerate(fragments):
         time_start = fragment['time-start']
         time_length = fragment['time-length']
@@ -295,26 +331,25 @@ def main(args):
         if args.output_stt:
             result_fragment['stt'] = fragment_transcript
 
-        match, match_distance, match_substitutions = search.find_best(fragment_transcript)
-        if match is None:
+        if 'match' not in fragment:
             skip(index, 'No match for transcript')
             continue
-        original_start = tc.get_original_offset(match.start)
-        original_end = tc.get_original_offset(match.end)
+        match_range, sws_score, match_substitutions = fragment['match']
+        original_start = tc.get_original_offset(match_range.start)
+        original_end = tc.get_original_offset(match_range.end)
         result_fragment['text-start'] = original_start
         result_fragment['text-length'] = original_end - original_start
         if args.output_aligned_raw:
             result_fragment['aligned-raw'] = original_transcript[original_start:original_end]
         substitutions += match_substitutions
-        fragment_matched = tc.clean_text[match.start:match.end]
+        fragment_matched = tc.clean_text[match_range.start:match_range.end]
 
         if should_skip('mlen', index, sample_numbers, lambda: len(fragment_matched)):
             continue
         if args.output_aligned:
             result_fragment['aligned'] = fragment_matched
 
-        if should_skip('SWS', index, sample_numbers,
-                       lambda: match_distance / max(len(fragment_matched), len(fragment_transcript))):
+        if should_skip('SWS', index, sample_numbers, lambda: 100 * sws_score):
             continue
 
         if should_skip('WNG', index, sample_numbers,
@@ -340,10 +375,10 @@ def main(args):
         logging.debug('Fragment %d aligned with %s' % (index, ' '.join(sample_numbers)))
         logging.debug('- T: ' + args.text_context * ' ' + '"%s"' % fragment_transcript)
         logging.debug('- O: %s|%s|%s' % (
-            tc.clean_text[match.start-args.text_context:match.start],
+            tc.clean_text[match_range.start-args.text_context:match_range.start],
             fragment_matched,
-            tc.clean_text[match.end:match.end+args.text_context]))
-        start = match.end
+            tc.clean_text[match_range.end:match_range.end+args.text_context]))
+        start = match_range.end
         if args.play:
             subprocess.check_call(['play',
                                    '--no-show-progress',

@@ -1,5 +1,5 @@
 def circulate(items, center=None):
-    count = len(items)
+    count = len(list(items))
     if count > 0:
         if center is None:
             center = count // 2
@@ -16,6 +16,30 @@ def circulate(items, center=None):
 def by_len(items):
     indexed = list(enumerate(items))
     return sorted(indexed, key=lambda e: len(e[1]), reverse=True)
+
+
+def enweight(items, direction=0):
+    """
+    Enumerates all entries together with a positional weight value.
+    The positional weight progresses quadratically.
+    :param items: Items to enumerate
+    :param direction: Order of assigning positional weights to N-grams:
+        direction < 0: Weight of first N-gram is 1.0 and of last one 0.0
+        direction > 0: Weight of first N-gram is 0.0 and of last one 1.0
+        direction == 0: Weight of center N-gram(s) near or equal 0, weight of first and last N-gram 1.0
+    :return: Produces (object, float) tuples representing the enumerated item
+             along with its assigned positional weight value
+    """
+    items = list(items)
+    direction = -1 if direction < 0 else (1 if direction > 0 else 0)
+    n = len(items) - 1
+    if n < 1:
+        if n == 0:
+            yield items[0], 1
+        raise StopIteration
+    for i, item in enumerate(items):
+        c = (i + n * (direction - 1) / 2) / n
+        yield item, c * c * (4 - abs(direction) * 3)
 
 
 def greedy_minimum_search(a, b, compute, result_a=None, result_b=None):

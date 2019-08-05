@@ -125,22 +125,32 @@ class FuzzySearch(object):
         snap_range = start_token + end_token
         return snap_range.start, snap_range.end
 
-    def find_best(self, look_for, start=0, stop=-1):
-        stop = len(self.text) if stop < 0 else stop
+    def find_best_in_interval(self, look_for, start, end):
+        interval_start, interval_end, score, substitutions = self.sw_align(look_for, start, end)
+        score = score / (self.match_score * max(interval_end - interval_start, len(look_for)))
+        if self.snap_to_word:
+            interval_start, interval_end = self.snap(look_for, interval_start, interval_end)
+        return TextRange(self.text, interval_start, interval_end), score, substitutions
+
+    def find_best(self, look_for, start=0, end=-1):
+        end = len(self.text) if end < 0 else end
+        if end - start < 2 * len(look_for):
+            print('DIRECT matching')
+            return self.find_best_in_interval(look_for, start, end)
         window_size = len(look_for)
         windows = {}
         for i, ngram in enumerate(ngrams(' ' + look_for + ' ', 3)):
             if ngram in self.ngrams:
                 ngram_bucket = self.ngrams[ngram]
                 for occurrence in ngram_bucket:
-                    if occurrence < start or occurrence > stop:
+                    if occurrence < start or occurrence > end:
                         continue
                     window = occurrence // window_size
                     windows[window] = (windows[window] + 1) if window in windows else 1
         candidate_windows = sorted(windows.keys(), key=lambda w: windows[w], reverse=True)
         best_interval = None
         best_substitutions = None
-        best_score = -10000000000
+        best_score = 0
         last_window_grams = 0.1
         for window in candidate_windows[:self.max_candidates]:
             ngram_factor = (windows[window] / last_window_grams)
@@ -148,12 +158,10 @@ class FuzzySearch(object):
                 break
             last_window_grams = windows[window]
             interval_start = max(start, int((window - 1) * window_size))
-            interval_end = min(stop,  int((window + 2) * window_size))
-            interval_start, interval_end, score, substitutions = self.sw_align(look_for, interval_start, interval_end)
-            if self.snap_to_word:
-                interval_start, interval_end = self.snap(look_for, interval_start, interval_end)
+            interval_end = min(end, int((window + 2) * window_size))
+            interval, score, substitutions = self.find_best_in_interval(look_for, interval_start, interval_end)
             if score > best_score:
-                best_interval = TextRange(self.text, interval_start, interval_end)
+                best_interval = interval
                 best_score = score
                 best_substitutions = substitutions
         return best_interval, best_score, best_substitutions
