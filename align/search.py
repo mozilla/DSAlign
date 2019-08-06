@@ -101,10 +101,10 @@ class FuzzySearch(object):
         best_similarity = 0
         current_token = best_token = start_token
         for i in range(self.snap_radius + 1):
-            current_similarity = self.phrase_similarity(current_token.get_text(), target, direction)
-            if current_similarity > best_similarity:
-                best_similarity = current_similarity
-                best_token = current_token
+            # current_similarity = self.phrase_similarity(current_token.get_text(), target, direction)
+            # if current_similarity > best_similarity:
+            #     best_similarity = current_similarity
+            #     best_token = current_token
             current_similarity = self.phrase_similarity((current_token + start_token).get_text(), target, direction)
             if current_similarity > best_similarity:
                 best_similarity = current_similarity
@@ -135,7 +135,6 @@ class FuzzySearch(object):
     def find_best(self, look_for, start=0, end=-1):
         end = len(self.text) if end < 0 else end
         if end - start < 2 * len(look_for):
-            print('DIRECT matching')
             return self.find_best_in_interval(look_for, start, end)
         window_size = len(look_for)
         windows = {}
@@ -164,4 +163,5 @@ class FuzzySearch(object):
                 best_interval = interval
                 best_score = score
                 best_substitutions = substitutions
+
         return best_interval, best_score, best_substitutions

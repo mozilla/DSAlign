@@ -285,34 +285,29 @@ def main(args):
 
 
     def split_match(fragments, start=0, end=-1):
-        print('From {} to {}...'.format(start, end))
         n = len(fragments)
         if n == 0:
             return
-        best_weight = 0
-        best_index = None
-        best_match = None
-        weighted_fragments = map(lambda fw: (fw[0], (2.0 - fw[1]) * len(fw[0][1]['transcript'])), enweight(enumerate(fragments)))
-        for fragment, weight in sorted(weighted_fragments, key=lambda fw: fw[1], reverse=True):
+        weighted_fragments = map(lambda fw: (fw[0], (1 - fw[1]) * len(fw[0][1]['transcript'])), enweight(enumerate(fragments)))
+        weighted_fragments = sorted(weighted_fragments, key=lambda fw: fw[1], reverse=True)
+        for fragment, weight in weighted_fragments:
             index, fragment = fragment
+            #print('Looking for "{}"...'.format(fragment['transcript']))
             match = search.find_best(fragment['transcript'], start=start, end=end)
-            _, sws_score, _ = match
-            weight = weight * sws_score
-            if weight > best_weight:
-                best_weight = weight
-                best_index = index
-                best_match = match
-            break
-        if best_match:
-            fragment = fragments[best_index]
-            match_interval, _, _ = best_match
-            match_start, match_end = match_interval.start, match_interval.end
-            fragment['match'] = best_match
-            split_match(fragments[0:index], start=start, end=match_start)
-            #print(match_interval.get_text())
-            split_match(fragments[index + 1:], start=match_end, end=end)
+            match_interval, sws_score, match_substitutions = match
+            if sws_score > 0.1:
+                #print('Found it!')
+                fragment['match'] = match
+                split_match(fragments[0:index], start=start, end=match_interval.start)
+                split_match(fragments[index + 1:], start=match_interval.end, end=end)
+                return
         else:
-            print('Oh no! {} {}'.format(weight, sws_score))
+            transcript = ' '.join(map(lambda f: f['transcript'], fragments))
+            print('Not found ({}): "{}" '.format(len(fragments), transcript))
+            print('Before: "{}"'.format(search.text[start - 40:start]))
+            print('In:     "{}"'.format(search.text[start:end]))
+            print('After:  "{}"'.format(search.text[end:end + 40]))
+            print('')
 
     split_match(fragments)
 
