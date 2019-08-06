@@ -283,31 +283,24 @@ def main(args):
                 return True
         return False
 
-
     def split_match(fragments, start=0, end=-1):
         n = len(fragments)
         if n == 0:
             return
-        weighted_fragments = map(lambda fw: (fw[0], (1 - fw[1]) * len(fw[0][1]['transcript'])), enweight(enumerate(fragments)))
+        weighted_fragments = enweight(enumerate(fragments))
+        # assigns high values to long statements near the center of the list
+        weighted_fragments = map(lambda fw: (fw[0], (1 - fw[1]) * len(fw[0][1]['transcript'])), weighted_fragments)
+        # highest first
         weighted_fragments = sorted(weighted_fragments, key=lambda fw: fw[1], reverse=True)
-        for fragment, weight in weighted_fragments:
+        for fragment, _ in weighted_fragments:
             index, fragment = fragment
-            #print('Looking for "{}"...'.format(fragment['transcript']))
             match = search.find_best(fragment['transcript'], start=start, end=end)
             match_interval, sws_score, match_substitutions = match
             if sws_score > 0.1:
-                #print('Found it!')
                 fragment['match'] = match
                 split_match(fragments[0:index], start=start, end=match_interval.start)
                 split_match(fragments[index + 1:], start=match_interval.end, end=end)
                 return
-        else:
-            transcript = ' '.join(map(lambda f: f['transcript'], fragments))
-            print('Not found ({}): "{}" '.format(len(fragments), transcript))
-            print('Before: "{}"'.format(search.text[start - 40:start]))
-            print('In:     "{}"'.format(search.text[start:end]))
-            print('After:  "{}"'.format(search.text[end:end + 40]))
-            print('')
 
     split_match(fragments)
 
