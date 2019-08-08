@@ -70,18 +70,18 @@ def main(args):
                              help='Mismatch score for Smith-Waterman alignment (default: -100)')
     align_group.add_argument('--align-gap-score', type=int, required=False, default=-100,
                              help='Gap score for Smith-Waterman alignment (default: -100)')
-    align_group.add_argument('--align-no-snap', action="store_true",
-                             help='Deactivates snapping to word boundaries at the beginning and end of each phrase')
-    align_group.add_argument('--align-snap-radius', type=int, required=False, default=0,
-                             help='How many words to look up to the left and right for snapping to word ' +
-                                  'boundaries at the beginning and end of each phrase')
+    align_group.add_argument('--align-stretch-factor', type=float, required=False, default=0.5,
+                             help='Length fraction of the fragment that it could get stretched for matching')
+    align_group.add_argument('--align-snap-factor', type=float, required=False, default=1.1,
+                             help='Priority factor for snapping matched texts to word boundaries '
+                                  '(default: 1.1 - slightly snappy)')
     align_group.add_argument('--align-min-ngram-size', type=int, required=False, default=1,
                              help='Minimum N-gram size for weighted N-gram similarity during snapping (default: 1)')
     align_group.add_argument('--align-max-ngram-size', type=int, required=False, default=3,
                              help='Maximum N-gram size for weighted N-gram similarity during snapping (default: 3)')
     align_group.add_argument('--align-ngram-size-factor', type=int, required=False, default=1,
                              help='Size weight for weighted N-gram similarity during snapping (default: 1)')
-    align_group.add_argument('--align-ngram-position-factor', type=int, required=False, default=3,
+    align_group.add_argument('--align-ngram-position-factor', type=int, required=False, default=1,
                              help='Position weight for weighted N-gram similarity during snapping (default: 3)')
     align_group.add_argument('--align-min-length', type=int, required=False, default=4,
                              help='Minimum STT phrase length to align (default: 4)')
@@ -322,15 +322,15 @@ def main(args):
                           size_factor=args.align_ngram_size_factor,
                           position_factor=args.align_ngram_position_factor)
 
-    def stretch(a, b, c, direction):
-        best_s = 0
-        best_i = 0
-        for i in range(len(c)):
-            s = phrase_similarity(a, b + c[:i], 1) if direction > 0 else phrase_similarity(a, c[-i:] + b, -1)
-            if s > best_s:
-                best_s = s
-                best_i = i
-        return best_i
+    def get_similarities(a, b, gap_text, direction):
+        if direction < 0:
+            a, b, gap_text = a[::-1], b[::-1], gap_text[::-1]
+        stretch = min(len(gap_text), int(args.align_stretch_factor * len(b)))
+        similarities = list(map(lambda i: (args.align_snap_factor if gap_text[i] == ' ' else 1) *
+                                          phrase_similarity(a, b + gap_text[:i], 1),
+                                range(stretch)))
+        best = max((v, i) for i, v in enumerate(similarities))[1] if stretch > 0 else 0
+        return best, similarities
 
     for index in range(len(matched_fragments) - 1):
         a, b = matched_fragments[index], matched_fragments[index + 1]
@@ -343,38 +343,21 @@ def main(args):
         a_trans, b_trans = a['transcript'], b['transcript']
         a_match, b_match = search.text[a_start:a_end], search.text[b_start:b_end]
 
-        new_a_end = a_end + stretch(a_trans, a_match, gap_text, 1)
-        new_b_start = b_start - stretch(a_trans, a_match, gap_text, -1)
+        a_best_index, a_similarities = get_similarities(a_trans, a_match, gap_text, 1)
+        a_best_end = a_best_index + a_end
 
+        b_best_index, b_similarities = get_similarities(b_trans, b_match, gap_text, -1)
+        b_best_start = b_start - b_best_index
 
-        print(a['transcript'], '-', b['transcript'])
-        print('{}<{}>{}'.format(a_match[-10:], gap_text, b_match[:10]))
-        print('{}<{}>{}'.format(search.text[new_a_end-10:new_a_end][-10:],
-                                search.text[new_a_end:new_b_start],
-                                search.text[new_b_start:new_b_start+10]))
-        print()
+        if a_best_end > b_best_start:
+            overlap_start = b_start - len(b_similarities)
+            a_similarities = a_similarities[overlap_start - a_end:]
+            b_similarities = b_similarities[:len(a_similarities)]
+            best_index = max((sum(v), i) for i, v in enumerate(zip(a_similarities, b_similarities)))[1]
+            a_best_end = b_best_start = overlap_start + best_index
 
-
-        # min_ngram_size = args.align_min_ngram_size
-        # max_ngram_size = args.align_max_ngram_size
-        # stretch_factor = args.align_stretch_factor
-        # size_factor = args.align_ngram_size_factor
-        # position_factor = args.align_ngram_position_factor
-        # snap_to_word = not args.align_no_snap
-
-        #start_token = TextRange.token_at(self.text, start)
-        #if len(start_token) == 0:
-        #    start_token = TextRange.token_at(self.text, start + 1)
-        #end_token = TextRange.token_at(self.text, max(0, end - 1))
-        #if self.snap_radius > 0:
-        #    look_for = look_for.split(' ')
-        #    lf_start, lf_end = look_for[0], look_for[-1]
-        #    start_token = self.extend(lf_start, start_token, -1)
-        #    end_token = self.extend(lf_end, end_token, 1)
-        #snap_range = start_token + end_token
-        #return snap_range.start, snap_range.end
-
-    return
+        a['match_end'] = a_best_end
+        b['match_start'] = b_best_start
 
     for fragment in fragments:
         index = fragment['index']
