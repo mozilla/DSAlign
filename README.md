@@ -143,23 +143,44 @@ load it and skip the transcription phase.
 `--stt-model-dir <DIR>` points DeepSpeech to the language specific model data directory.
 It defaults to `models/en`. Use `bin/getmodel.sh` for preparing it.  
 
-### Step 5a - Finding candidate windows in original text
+### Step 5 - Rough alignment
 
-Finding the best match of a given phrase within the original transcript is essentially about
-finding the character sequence within the original text that has the lowest Levenshtein distance
-to the phrase.
+1. Construct an ordered list of of all phrases in the current interval
+(at the beginning all phrases to align),
+where long phrases close to the middle of the interval come first.
+2. Iterate through the list and compute the best Smith-Waterman alignment
+(see the following sub-sections) with the document's original text...
+3. ...till there is a phrase whose Smith-Waterman alignment score surpasses a (low) recursion-depth 
+dependent threshold (in most cases this should already be the first phrase).
+4. Recursively continue with step 1 for the sub-intervals and original text ranges
+to the left and right of the phrase and its aligned text range within the original text.
+5. Retain all phrases in order of appearance (depth-first) that were aligned with the minimum 
+Smith-Waterman score on their recursion level.
 
-As best Levenshtein distance algorithms are still of quadratic complexity,
-computing them for each possible target sequence to find the lowest one is not feasible. 
+This approach assumes that all phrases were spoken in the same order as they appear in the
+original transcript. It has the following advantages compared to individual
+global phrase matching:
 
-So this tool follows a two-phase approach where the first goal is to get a list of so called 
-candidate windows. Candidate windows are areas within the original text with higher
-probability of containing the sequence with the lowest Levenshtein distance to the search pattern.
+- Long non-matching chunks of spoken text or the original transcript will automatically and 
+cleanly get ignored.
+- Short phrases (with the risk of matching more than one time per document) will automatically
+get aligned to their intended locations through longer ones that "squeeze" them in.
+- Smith-Waterman score thresholds can overall be kept lower 
+(and thus better match lower quality STT transcripts), as there is a lower chance for 
+  - long sequences to match at a wrong location and for 
+  - shorter sequences to match at a wrong location within their shortened intervals
+  (as they are getting matched later and deeper in the recursion tree).
 
-For determining them the original text is virtually split into a sequence of disjunct windows
-of the length of the search pattern. Then the blocks are ordered descending by the number of
-3-grams they share with the search pattern. Candidate windows are then taken from the beginning
-of this ordered list.
+#### Smith-Waterman candidate selection
+
+Finding the best match of a given phrase within the original (potentially long) transcript
+using vanilla Smith-Waterman is not feasible.
+
+So this tool follows a two-phase approach where the first goal is to get a list of alignment 
+candidates. For that the original text is first virtually partitioned into windows of the 
+same length as the search pattern. These are then ordered descending by the number of 3-grams
+they share with the pattern.
+Best alignment candidates are then taken from the beginning of this ordered list.
 
 `--align-max-candidates <CANDIDATES>` sets the maximum number of candidate windows
 taken from the beginning of the list for further alignment.
@@ -168,24 +189,28 @@ taken from the beginning of the list for further alignment.
 window it gives the minimum number of 3-grams the next candidate window has to have to also be
 considered a candidate.
 
-### Step 5b - Aligning phrases within candidate windows
+#### Smith-Waterman alignment
 
-For each candidate window the best possible alignment is searched 
-by computing the Levenshtein distance for each candidate in a radius of half a window 
-around the candidate window:
+For each candidate, the best possible alignment is computed using the 
+[Smith-Waterman](https://en.wikipedia.org/wiki/Smith%E2%80%93Waterman_algorithm) algorithm
+within one window-size to the left and right of it.
 
-1. Binary search best (Levenshtein distance) sequence with the same length as the search pattern 
-2. Binary search best (Levenshtein distance) stretched or shrunken sequence 
-around sequence location of step 1 
-3. Snap first and last token of search pattern to lowest distance tokens around character offsets
-in original text
+`--align-match-score <SCORE>` is the score per correctly matched character. Default: 100
 
-`--align-no-snap-to-token` deactivates token snapping (step 3)
+`--align-mismatch-score <SCORE>` is the score per non-matching (exchanged) character. Default: -100
 
-`--align-stretch-fraction <FRACTION>` sets the fraction of the search pattern length the final
-alignment can get shrunken or expanded
+`--align-gap-score <SCORE>` is the score per character gap (removing 1 character from pattern or original). Default: -100
 
-### Step 6 - Selection, filtering and output
+The overall best score for the best match is normalized to about 100 maximum by dividing
+it through the maximum character count of either the match or the pattern.
+
+During the output step this score can then be used for filtering (abbreviated as `sws`).
+
+### Step 6 - Fine alignment
+
+
+
+### Step 7 - Selection, filtering and output
 
 Finally the best alignment of all candidate windows is selected as the winner.
 It has to survive a series of filters for getting into the result file:
