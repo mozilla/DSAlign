@@ -72,16 +72,16 @@ def main(args):
                              help='Gap score for Smith-Waterman alignment (default: -100)')
     align_group.add_argument('--align-stretch-factor', type=float, required=False, default=1,
                              help='Length fraction of the fragment that it could get stretched for matching')
-    align_group.add_argument('--align-snap-factor', type=float, required=False, default=1.1,
+    align_group.add_argument('--align-snap-factor', type=float, required=False, default=1.5,
                              help='Priority factor for snapping matched texts to word boundaries '
                                   '(default: 1.1 - slightly snappy)')
     align_group.add_argument('--align-min-ngram-size', type=int, required=False, default=1,
                              help='Minimum N-gram size for weighted N-gram similarity during snapping (default: 1)')
     align_group.add_argument('--align-max-ngram-size', type=int, required=False, default=3,
                              help='Maximum N-gram size for weighted N-gram similarity during snapping (default: 3)')
-    align_group.add_argument('--align-ngram-size-factor', type=int, required=False, default=1,
+    align_group.add_argument('--align-ngram-size-factor', type=float, required=False, default=1,
                              help='Size weight for weighted N-gram similarity during snapping (default: 1)')
-    align_group.add_argument('--align-ngram-position-factor', type=int, required=False, default=1,
+    align_group.add_argument('--align-ngram-position-factor', type=float, required=False, default=2.5,
                              help='Position weight for weighted N-gram similarity during snapping (default: 1)')
     align_group.add_argument('--align-min-length', type=int, required=False, default=4,
                              help='Minimum STT phrase length to align (default: 4)')
@@ -325,39 +325,50 @@ def main(args):
     def get_similarities(a, b, gap_text, direction):
         if direction < 0:
             a, b, gap_text = a[::-1], b[::-1], gap_text[::-1]
-        stretch = min(len(gap_text), int(args.align_stretch_factor * len(b)))
+        n = min(len(gap_text), int(args.align_stretch_factor * len(b)))
         similarities = list(map(lambda i: (args.align_snap_factor if gap_text[i] == ' ' else 1) *
                                           phrase_similarity(a, b + gap_text[:i], 1),
-                                range(stretch)))
-        best = max((v, i) for i, v in enumerate(similarities))[1] if stretch > 0 else 0
+                                range(n)))
+        best = max((v, i) for i, v in enumerate(similarities))[1] if n > 0 else 0
         return best, similarities
 
-    for index in range(len(matched_fragments) - 1):
-        a, b = matched_fragments[index], matched_fragments[index + 1]
-        a_start, a_end = a['match_start'], a['match_end']
-        b_start, b_end = b['match_start'], b['match_end']
+    for index in range(len(matched_fragments) + 1):
+        if index > 0:
+            a = matched_fragments[index - 1]
+            a_start, a_end = a['match_start'], a['match_end']
+        else:
+            a = None
+            a_start = a_end = 0
+        if index < len(matched_fragments):
+            b = matched_fragments[index]
+            b_start, b_end = b['match_start'], b['match_end']
+        else:
+            b = None
+            b_start = b_end = len(search.text)
+
         assert a_end <= b_start
         gap_text = search.text[a_end:b_start]
         if a_end == b_start or len(gap_text.strip()) == 0:
             continue
-        a_trans, b_trans = a['transcript'], b['transcript']
-        a_match, b_match = search.text[a_start:a_end], search.text[b_start:b_end]
 
-        a_best_index, a_similarities = get_similarities(a_trans, a_match, gap_text, 1)
-        a_best_end = a_best_index + a_end
+        if a:
+            a_best_index, a_similarities = get_similarities(a['transcript'], search.text[a_start:a_end], gap_text, 1)
+            a_best_end = a_best_index + a_end
+        if b:
+            b_best_index, b_similarities = get_similarities(b['transcript'], search.text[b_start:b_end], gap_text, -1)
+            b_best_start = b_start - b_best_index
 
-        b_best_index, b_similarities = get_similarities(b_trans, b_match, gap_text, -1)
-        b_best_start = b_start - b_best_index
-
-        if a_best_end > b_best_start:
+        if a and b and a_best_end > b_best_start:
             overlap_start = b_start - len(b_similarities)
             a_similarities = a_similarities[overlap_start - a_end:]
             b_similarities = b_similarities[:len(a_similarities)]
             best_index = max((sum(v), i) for i, v in enumerate(zip(a_similarities, b_similarities)))[1]
             a_best_end = b_best_start = overlap_start + best_index
 
-        a['match_end'] = a_best_end
-        b['match_start'] = b_best_start
+        if a:
+            a['match_end'] = a_best_end
+        if b:
+            b['match_start'] = b_best_start
 
     for fragment in fragments:
         index = fragment['index']
