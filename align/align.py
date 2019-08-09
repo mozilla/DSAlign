@@ -70,7 +70,7 @@ def main(args):
                              help='Mismatch score for Smith-Waterman alignment (default: -100)')
     align_group.add_argument('--align-gap-score', type=int, required=False, default=-100,
                              help='Gap score for Smith-Waterman alignment (default: -100)')
-    align_group.add_argument('--align-stretch-factor', type=float, required=False, default=0.5,
+    align_group.add_argument('--align-stretch-factor', type=float, required=False, default=1,
                              help='Length fraction of the fragment that it could get stretched for matching')
     align_group.add_argument('--align-snap-factor', type=float, required=False, default=1.1,
                              help='Priority factor for snapping matched texts to word boundaries '
@@ -82,7 +82,7 @@ def main(args):
     align_group.add_argument('--align-ngram-size-factor', type=int, required=False, default=1,
                              help='Size weight for weighted N-gram similarity during snapping (default: 1)')
     align_group.add_argument('--align-ngram-position-factor', type=int, required=False, default=1,
-                             help='Position weight for weighted N-gram similarity during snapping (default: 3)')
+                             help='Position weight for weighted N-gram similarity during snapping (default: 1)')
     align_group.add_argument('--align-min-length', type=int, required=False, default=4,
                              help='Minimum STT phrase length to align (default: 4)')
     align_group.add_argument('--align-max-length', type=int, required=False,
@@ -299,7 +299,7 @@ def main(args):
         for index, fragment in weighted_fragments:
             match = search.find_best(fragment['transcript'], start=start, end=end)
             match_start, match_end, sws_score, match_substitutions = match
-            if sws_score > 0.1:
+            if sws_score > (n - 1) / (2 * n):
                 fragment['match_start'] = match_start
                 fragment['match_end'] = match_end
                 fragment['sws_score'] = sws_score

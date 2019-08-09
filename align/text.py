@@ -176,7 +176,7 @@ def similarity(a, b, direction=0, min_ngram_size=1, max_ngram_size=3, size_facto
     for s, c in [(a, ca), (b, cb)]:
         for size in range(min_ngram_size, max_ngram_size + 1):
             for ng, position_weight in weighted_ngrams(s, size, direction=direction):
-                c[ng] += size * size_factor + position_weight * position_factor
+                c[ng] += size * size_factor + position_weight * position_weight * position_factor
     score = 0
     for key in set(ca.keys()) & set(cb.keys()):
         score += min(ca[key], cb[key])
