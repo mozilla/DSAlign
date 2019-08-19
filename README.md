@@ -145,8 +145,10 @@ It defaults to `models/en`. Use `bin/getmodel.sh` for preparing it.
 
 ### Step 5 - Rough alignment
 
+The actual text alignment is based on a recursive divide and conquer approach:
+
 1. Construct an ordered list of of all phrases in the current interval
-(at the beginning all phrases to align),
+(at the beginning this is the list of all phrases that are to be aligned),
 where long phrases close to the middle of the interval come first.
 2. Iterate through the list and compute the best Smith-Waterman alignment
 (see the following sub-sections) with the document's original text...
@@ -154,7 +156,7 @@ where long phrases close to the middle of the interval come first.
 dependent threshold (in most cases this should already be the first phrase).
 4. Recursively continue with step 1 for the sub-intervals and original text ranges
 to the left and right of the phrase and its aligned text range within the original text.
-5. Retain all phrases in order of appearance (depth-first) that were aligned with the minimum 
+5. Return all phrases in order of appearance (depth-first) that were aligned with the minimum 
 Smith-Waterman score on their recursion level.
 
 This approach assumes that all phrases were spoken in the same order as they appear in the
@@ -164,8 +166,8 @@ global phrase matching:
 - Long non-matching chunks of spoken text or the original transcript will automatically and 
 cleanly get ignored.
 - Short phrases (with the risk of matching more than one time per document) will automatically
-get aligned to their intended locations through longer ones that "squeeze" them in.
-- Smith-Waterman score thresholds can overall be kept lower 
+get aligned to their intended locations by longer ones who "squeeze" them in.
+- Smith-Waterman score thresholds can be kept lower 
 (and thus better match lower quality STT transcripts), as there is a lower chance for 
   - long sequences to match at a wrong location and for 
   - shorter sequences to match at a wrong location within their shortened intervals
@@ -177,10 +179,10 @@ Finding the best match of a given phrase within the original (potentially long) 
 using vanilla Smith-Waterman is not feasible.
 
 So this tool follows a two-phase approach where the first goal is to get a list of alignment 
-candidates. For that the original text is first virtually partitioned into windows of the 
-same length as the search pattern. These are then ordered descending by the number of 3-grams
+candidates. As the first step the original text is virtually partitioned into windows of the 
+same length as the search pattern. These windows are ordered descending by the number of 3-grams
 they share with the pattern.
-Best alignment candidates are then taken from the beginning of this ordered list.
+Best alignment candidates are now taken from the beginning of this ordered list.
 
 `--align-max-candidates <CANDIDATES>` sets the maximum number of candidate windows
 taken from the beginning of the list for further alignment.
@@ -193,7 +195,7 @@ considered a candidate.
 
 For each candidate, the best possible alignment is computed using the 
 [Smith-Waterman](https://en.wikipedia.org/wiki/Smith%E2%80%93Waterman_algorithm) algorithm
-within one window-size to the left and right of it.
+within an extended interval of one window-size around the candidate window.
 
 `--align-match-score <SCORE>` is the score per correctly matched character. Default: 100
 
@@ -201,37 +203,109 @@ within one window-size to the left and right of it.
 
 `--align-gap-score <SCORE>` is the score per character gap (removing 1 character from pattern or original). Default: -100
 
-The overall best score for the best match is normalized to about 100 maximum by dividing
+The overall best score for the best match is normalized to a value of about 100 maximum by dividing
 it through the maximum character count of either the match or the pattern.
 
 During the output step this score can then be used for filtering (abbreviated as `sws`).
 
-### Step 6 - Fine alignment
+### Step 6 - Gap alignment
 
+After recursive matching of fragments there are potential text leftovers between aligned original
+texts.
 
+Some examples:
+- Often: Missing (and therefore unaligned) STT transcripts of word-endings (e.g. English past tense endings _-d_ and _-ed_)
+on phrase endings to the left of the gap
+- Seldom: Phrase beginnings or endings that were wrongly matched on unspoken (but written) text whose actual
+alignments are now left unaligned in the gap
+- Big unmatched chunks of text, like
+  - Preface, text summaries or any other kind of meta information
+  - Copyright headers/footers
+  - Table of contents
+- Chapter headers (if not spoken as they appear)
+- Captions of figures
+- Contents of tables
+- Line-headers like character names in drama scripts
+- Dependent of the (pre-processing) quality: OCR leftovers like
+  - page headers
+  - page numbers
+  - reader's notes
+  
+The basic challenge here is to figure out, if all or some of the gap text should be used to extend 
+the phrase to the left and/or to the right of the gap.
+
+As Smith-Waterman alignment led to the current (potentially incomplete or even wrong) result,
+its score cannot be used for further fine-tuning.
+Instead the tool uses a score that is computed as the sum of the number of weighted shared N-grams.
+It ensures that:
+- Shared N-gram instances near interval bounds (dependent on situation) get rated higher than
+the ones near the center or opposite end
+- Large shared N-gram instances are weighted higher than short ones
+
+`--align-min-ngram-size <SIZE>` sets the start (minimum) N-gram size
+
+`--align-max-ngram-size <SIZE>` sets the final (maximum) N-gram size
+
+`--align-ngram-size-factor <FACTOR>` sets a weight factor for the size preference
+
+`--align-ngram-position-factor <FACTOR>` sets a weight factor for the position preference
+
+During the output step this score can also be used for filtering (abbreviated as `wng`).
+
+Using this score, the gap alignment is done by looking for the best scoring extension
+of the left and right phrases up to their maximum extension.
+
+`--align-stretch-factor <FRACTION>` is the fraction of the text length that it could get
+stretched at max.  
+
+For many languages it is worth putting some emphasis on matching to words boundaries 
+(that is white-space separated sub-sequences).
+
+`--align-snap-factor <FACTOR>` allows to control the snappiness to word boundaries.
+
+If the best scoring extensions should overlap, the best scoring sum of non-overlapping
+(but touching) extensions will win.
 
 ### Step 7 - Selection, filtering and output
 
 Finally the best alignment of all candidate windows is selected as the winner.
 It has to survive a series of filters for getting into the result file:
 
-`--output-min-length <LENGTH>` only accepts samples having original transcripts of the
+`--output-min-tlen <LENGTH>` only accepts samples having STT transcripts of the
 provided minimum character length
                               
-`--output-max-length <LENGTH>` only accepts samples having original transcripts of the
+`--output-max-tlen <LENGTH>` only accepts samples having STT transcripts of the
+provided maximum character length
+
+`--output-min-mlen <LENGTH>` only accepts samples having matching original transcripts of the
+provided minimum character length
+                              
+`--output-max-mlen <LENGTH>` only accepts samples having matching original transcripts of the
 provided maximum character length 
 
-`--output-min-wer <WER>` only accepts samples whose STT transcripts have the provided minimum
-word error rate when compared to the best matching original transcript sequence
+`--output-min-sws <SWS>` only accepts samples whose STT transcripts have the provided minimum
+Smith-Waterman score when compared to best matching original transcript
 
-`--output-max-wer <WER>` only accepts samples whose STT transcripts have the provided maximum
-word error rate when compared to the best matching original transcript sequence
+`--output-max-sws <SWS>` only accepts samples whose STT transcripts have the provided maximum
+Smith-Waterman score when compared to best matching original transcript
+
+`--output-min-wng <WNG>` only accepts samples whose STT transcripts have the provided minimum
+weighted N-gram score when compared to best matching original transcript
+
+`--output-max-wng <WNG>` only accepts samples whose STT transcripts have the provided maximum
+weighted N-gram score when compared to best matching original transcript
 
 `--output-min-cer <CER>` only accepts samples whose STT transcripts have the provided minimum
-character error rate when compared to best matching original transcript sequence
+character error rate when compared to best matching original transcript
 
 `--output-max-cer <CER>` only accepts samples whose STT transcripts have the provided maximum
-character error rate when compared to best matching original transcript sequence
+character error rate when compared to best matching original transcript
+
+`--output-min-wer <WER>` only accepts samples whose STT transcripts have the provided minimum
+word error rate when compared to the best matching original transcript
+
+`--output-max-wer <WER>` only accepts samples whose STT transcripts have the provided maximum
+word error rate when compared to the best matching original transcript
 
 All result samples are written to a JSON result file of the form:
 ```javascript
@@ -256,12 +330,24 @@ aligned audio file
 aligned text document
 - `text-length`: Character length of the fragment's associated original text within the
 aligned text document
-- `cer`: Character error rate of the STT transcribed audio fragment compared to the
-associated original text
-- `wer`: Word error rate of the STT transcribed audio fragment compared to the associated
-original text
 
-Error rates are provided as fractional values (typically between 0.0 = 0% and 1.0 = 100%
+`--output-tlen` adds length of STT transcript as attribute `tlen` to array-entry
+
+`--output-mlen` adds length of matching original transcript as attribute `mlen` to array-entry
+
+`--output-sws` adds Smith-Waterman score
+(of STT transcript compared to matching original transcript) as attribute `sws` to array-entry
+
+`--output-wng` adds weighted N-gram score
+(of STT transcript compared to matching original transcript) as attribute `wng` to array-entry
+
+`--output-cer` adds character error rate
+(of STT transcript compared to matching original transcript) as attribute `cer` to array-entry
+
+`--output-wer` adds word error rate
+(of STT transcript compared to matching original transcript) as attribute `wer` to array-entry
+
+Error rates and scores are provided as fractional values (typically between 0.0 = 0% and 1.0 = 100%
 where numbers >1.0 are theoretically possible).
 
 ## General options
