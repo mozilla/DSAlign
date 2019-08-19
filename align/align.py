@@ -70,11 +70,11 @@ def main(args):
                              help='Mismatch score for Smith-Waterman alignment (default: -100)')
     align_group.add_argument('--align-gap-score', type=int, required=False, default=-100,
                              help='Gap score for Smith-Waterman alignment (default: -100)')
-    align_group.add_argument('--align-stretch-factor', type=float, required=False, default=1,
+    align_group.add_argument('--align-stretch-fraction', type=float, required=False, default=1,
                              help='Length fraction of the fragment that it could get stretched for matching')
     align_group.add_argument('--align-snap-factor', type=float, required=False, default=1.5,
                              help='Priority factor for snapping matched texts to word boundaries '
-                                  '(default: 1.1 - slightly snappy)')
+                                  '(default: 1.5 - slightly snappy)')
     align_group.add_argument('--align-min-ngram-size', type=int, required=False, default=1,
                              help='Minimum N-gram size for weighted N-gram similarity during snapping (default: 1)')
     align_group.add_argument('--align-max-ngram-size', type=int, required=False, default=3,
@@ -83,10 +83,6 @@ def main(args):
                              help='Size weight for weighted N-gram similarity during snapping (default: 1)')
     align_group.add_argument('--align-ngram-position-factor', type=float, required=False, default=2.5,
                              help='Position weight for weighted N-gram similarity during snapping (default: 1)')
-    align_group.add_argument('--align-min-length', type=int, required=False, default=4,
-                             help='Minimum STT phrase length to align (default: 4)')
-    align_group.add_argument('--align-max-length', type=int, required=False,
-                             help='Maximum STT phrase length to align (default: no limit)')
 
     output_group = parser.add_argument_group(title='Output options')
     output_group.add_argument('--output-stt', action="store_true",
@@ -325,7 +321,7 @@ def main(args):
     def get_similarities(a, b, gap_text, direction):
         if direction < 0:
             a, b, gap_text = a[::-1], b[::-1], gap_text[::-1]
-        n = min(len(gap_text), int(args.align_stretch_factor * len(b)))
+        n = min(len(gap_text), int(args.align_stretch_fraction * len(b)))
         similarities = list(map(lambda i: (args.align_snap_factor if gap_text[i] == ' ' else 1) *
                                           phrase_similarity(a, b + gap_text[:i], 1),
                                 range(n)))
