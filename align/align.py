@@ -210,10 +210,10 @@ def main(args):
             segment_buffer, time_start, time_end = segment
             time_length = time_end - time_start
             if args.stt_min_duration and time_length < args.stt_min_duration:
-                skip('Audio too short for STT', index)
+                logging.info('Fragment {}: Audio too short for STT'.format(index))
                 continue
             if args.stt_max_duration and time_length > args.stt_max_duration:
-                skip('Audio too long for STT', index)
+                logging.info('Fragment {}: Audio too long for STT'.format(index))
                 continue
             logging.debug("Transcribing segment %002d (from %f to %f)..." % (i, time_start / 1000.0, time_end / 1000.0))
             audio = np.frombuffer(segment_buffer, dtype=np.int16)
