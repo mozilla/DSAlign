@@ -239,7 +239,7 @@ def main(args):
                 #logging.debug("Transcribing segment %002d (from %f to %f)..." % (i, time_start / 1000.0, time_end / 1000.0))
                 yield (time_start, time_end, np.frombuffer(segment_buffer, dtype=np.int16))
 
-        samples = list(pre_filter())[10:60]
+        samples = list(pre_filter())
 
         transcripts = pool.starmap(stt, samples)
 
