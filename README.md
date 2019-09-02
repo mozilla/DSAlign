@@ -42,9 +42,9 @@ $ sudo apt-get install build-essential libboost-all-dev cmake zlib1g-dev libbz2-
 ```
 
 With all requirements fulfilled, there is a script for building and installing KenLM
-in the right location:
+and the required DeepSpeech tools in the right location:
 ```bash
-$ bin/buildkenlm.sh
+$ bin/lm-dependencies.sh
 ```
 
 If all went well, the alignment tool will find and use it to automatically create individual

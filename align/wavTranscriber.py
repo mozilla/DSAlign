@@ -3,7 +3,6 @@ import webrtcvad
 import logging
 import wavSplit
 from deepspeech import Model
-from timeit import default_timer as timer
 
 
 def load_model(models, alphabet, lm, trie):
@@ -24,17 +23,9 @@ def load_model(models, alphabet, lm, trie):
     LM_ALPHA = 1
     LM_BETA = 1.85
 
-    model_load_start = timer()
     ds = Model(models, N_FEATURES, N_CONTEXT, alphabet, BEAM_WIDTH)
-    model_load_end = timer() - model_load_start
-    logging.debug("Loaded model in %0.3fs." % (model_load_end))
-
-    lm_load_start = timer()
     ds.enableDecoderWithLM(alphabet, lm, trie, LM_ALPHA, LM_BETA)
-    lm_load_end = timer() - lm_load_start
-    logging.debug('Loaded language model in %0.3fs.' % (lm_load_end))
-
-    return ds, model_load_end, lm_load_end
+    return ds
 
 
 def stt(ds, audio, fs):
@@ -46,14 +37,9 @@ def stt(ds, audio, fs):
     :return: tuple (Inference result text, Inference time)
     """
     audio_length = len(audio) * (1 / 16000)
-
     # Run DeepSpeech
-    logging.debug('Running inference...')
-    inference_start = timer()
     output = ds.stt(audio, fs)
-    inference_time = timer() - inference_start
-    logging.debug('Inference took %0.3fs for %0.3fs audio file.' % (inference_time, audio_length))
-    return output, inference_time
+    return output
 
 
 def resolve_models(dir_name):
@@ -63,16 +49,9 @@ def resolve_models(dir_name):
     :return: tuple containing each of the model files (pb, alphabet, lm and trie)
     """
     pb = glob.glob(dir_name + "/*.pb")[0]
-    logging.debug("Found Model: %s" % pb)
-
     alphabet = glob.glob(dir_name + "/alphabet.txt")[0]
-    logging.debug("Found Alphabet: %s" % alphabet)
-
     lm = glob.glob(dir_name + "/lm.binary")[0]
     trie = glob.glob(dir_name + "/trie")[0]
-    logging.debug("Found Language Model: %s" % lm)
-    logging.debug("Found Trie: %s" % trie)
-
     return pb, alphabet, lm, trie
 
 
