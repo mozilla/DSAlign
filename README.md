@@ -134,9 +134,9 @@ uses the one from model dir instead.
 After VAD splitting the resulting fragments are transcribed into textual phrases.
 This transcription is done through [DeepSpeech](https://github.com/mozilla/DeepSpeech/) STT.
 
-As this can take a longer time, all resulting phrases 
-are - together with their timestamps - saved into a cache file 
-(the `result` parameter path with suffix `.cache`).
+As this can take a longer time, all resulting phrases are - together with their 
+timestamps - saved as JSON into a transcription log file 
+(the `audio` parameter path with suffix `.tlog` instead of `.wav`).
 Consecutive calls will look for that file and - if found - 
 load it and skip the transcription phase.
 
@@ -311,25 +311,30 @@ All result samples are written to a JSON result file of the form:
 ```javascript
 [
   {
-    "time-start": 714630,
-    "time-length": 8100,
-    "text-start": 13522,
-    "text-length": 150,
-    "cer": 0.31654676258992803,
-    "wer": 0.39285714285714285
+    "start": 8646120,
+    "end": 8647440,
+    "text-start": 127949,
+    "text-end": 127967
   },
   //...
 ]
 ```
 
 Each object array-entry represents a matched audio fragment with the following attributes:
-- `time-start`: Time offset of the audio fragment in milliseconds from the beginning of the
+- `start`: Time offset of the audio fragment in milliseconds from the beginning of the
 aligned audio file
-- `time-length`: Duration of the audio fragment in milliseconds
+- `end`: Time offset of the audio fragment's end in milliseconds from the beginning of the
+aligned audio file
 - `text-start`: Character offset of the fragment's associated original text within the
 aligned text document
-- `text-length`: Character length of the fragment's associated original text within the
+- `text-end`: Character offset of the end of the fragment's associated original text within the
 aligned text document
+
+`--output-stt` adds STT transcript as attribute `transcript` to array-entry
+
+`--output-aligned` adds clean aligned original transcript as attribute `aligned` to array-entry
+
+`--output-aligned-raw` adds raw aligned original transcript as attribute `aligned-raw` to array-entry
 
 `--output-tlen` adds length of STT transcript as attribute `tlen` to array-entry
 
