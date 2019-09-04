@@ -10,6 +10,7 @@ import wavTranscriber
 import multiprocessing
 from collections import Counter
 from search import FuzzySearch
+from tqdm import tqdm
 from text import Alphabet, TextCleaner, levenshtein, similarity
 from utils import enweight
 
@@ -21,14 +22,15 @@ worker_index = 0
 def init_stt(output_graph_path, alphabet_path, lm_path, trie_path, rate):
     global model, sample_rate
     sample_rate = rate
-    print('Process {}: Loaded models'.format(os.getpid()))
+    logging.debug('Process {}: Loaded models'.format(os.getpid()))
     model = wavTranscriber.load_model(output_graph_path, alphabet_path, lm_path, trie_path)
 
 
-def stt(time_start, time_end, audio):
-    print('Process {}: Transcribing...'.format(os.getpid()))
+def stt(sample):
+    time_start, time_end, audio = sample
+    logging.debug('Process {}: Transcribing...'.format(os.getpid()))
     transcript = wavTranscriber.stt(model, audio, sample_rate)
-    print('Process {}: {}'.format(os.getpid(), transcript))
+    logging.debug('Process {}: {}'.format(os.getpid(), transcript))
     return time_start, time_end, ' '.join(transcript.split())
 
 
@@ -44,6 +46,8 @@ def main(args):
 
     parser.add_argument('--loglevel', type=int, required=False, default=20,
                         help='Log level (between 0 and 50) - default: 20')
+    parser.add_argument('--no-progress', action="store_true",
+                        help='Prevents showing progress bars')
     parser.add_argument('--play', action="store_true",
                         help='Play audio fragments as they are matched using SoX audio tool')
     parser.add_argument('--text-context', type=int, required=False, default=10,
@@ -144,6 +148,10 @@ def main(args):
 
     # Debug helpers
     logging.basicConfig(stream=sys.stderr, level=args.loglevel if args.loglevel else 20)
+
+    def progress(iter, **kwargs):
+        return iter if args.no_progress else tqdm(iter, **kwargs)
+
     logging.debug("Start")
 
     model_dir = os.path.expanduser(args.stt_model_dir if args.stt_model_dir else 'models/en')
@@ -155,11 +163,11 @@ def main(args):
     logging.debug("Loading original transcript from %s..." % args.transcript)
     with open(args.transcript, 'r') as transcript_file:
         original_transcript = transcript_file.read()
-    tc = TextCleaner(original_transcript,
-                     alphabet,
+    tc = TextCleaner(alphabet,
                      dashes_to_ws=not args.text_keep_dashes,
                      normalize_space=not args.text_keep_ws,
                      to_lower=not args.text_keep_casing)
+    tc.add_original_text(original_transcript)
     clean_text_path = args.transcript + '.clean'
     with open(clean_text_path, 'w') as clean_text_file:
         clean_text_file.write(tc.clean_text)
@@ -239,20 +247,20 @@ def main(args):
                 #logging.debug("Transcribing segment %002d (from %f to %f)..." % (i, time_start / 1000.0, time_end / 1000.0))
                 yield (time_start, time_end, np.frombuffer(segment_buffer, dtype=np.int16))
 
-        samples = list(pre_filter())
+        samples = list(progress(pre_filter(), desc='VAD splitting'))
 
-        transcripts = pool.starmap(stt, samples)
+        transcripts = progress(pool.imap(stt, samples), desc='Transcribing', total=len(samples))
 
         fragments = []
         for time_start, time_end, segment_transcript in transcripts:
             if segment_transcript is None:
-                logging.debug("Segment %002d empty" % i)
                 continue
             fragments.append({
                 'start': time_start,
                 'end':   time_end,
                 'transcript': segment_transcript
             })
+        logging.debug("Excluded {} empty transcripts".format(len(transcripts) - len(fragments)))
 
         logging.debug("Writing transcription log to file %s..." % transcription_log)
         with open(transcription_log, 'w') as transcriptions_file:
@@ -271,34 +279,11 @@ def main(args):
     fragments = fragments[args.start:end_fragments]
     for index, fragment in enumerate(fragments):
         fragment['index'] = index
+        fragment['transcript'] = fragment['transcript'].strip()
 
     def skip(index, reason):
         logging.info('Fragment {}: {}'.format(index, reason))
         statistics[reason] += 1
-
-    def should_skip(number_key, index, show, get_value):
-        kl = number_key.lower()
-        should_output = getattr(args, 'output_' + kl)
-        min_val, max_val = getattr(args, 'output_min_' + kl), getattr(args, 'output_max_' + kl)
-        if should_output or min_val or max_val:
-            val = get_value()
-            if len(number_key) == 3:
-                show.insert(0, '{}: {:.2f}'.format(number_key, val))
-                if should_output:
-                    fragments[index][kl] = val
-            reason_base = '{} ({})'.format(named_numbers[number_key][0], number_key)
-            reason = None
-            if min_val and val < min_val:
-                reason = reason_base + ' too low'
-            elif max_val and val > max_val:
-                reason = reason_base + ' too high'
-            if reason:
-                skip(index, reason)
-                return True
-        return False
-
-    for index, fragment in enumerate(fragments):
-        fragment['index'] = index
 
     def split_match(fragments, start=0, end=-1):
         n = len(fragments)
@@ -315,7 +300,7 @@ def main(args):
             # fragments with highest weights first
             weighted_fragments = sorted(weighted_fragments, key=lambda fw: fw[1], reverse=True)
             # strip weights
-            weighted_fragments = map(lambda fw: fw[0], weighted_fragments)
+            weighted_fragments = list(map(lambda fw: fw[0], weighted_fragments))
         for index, fragment in weighted_fragments:
             match = search.find_best(fragment['transcript'], start=start, end=end)
             match_start, match_end, sws_score, match_substitutions = match
@@ -330,8 +315,11 @@ def main(args):
                 for f in split_match(fragments[index + 1:], start=match_end, end=end):
                     yield f
                 raise StopIteration
+        for _, _ in weighted_fragments:
+            yield None
 
-    matched_fragments = list(split_match(fragments))
+    matched_fragments = progress(split_match(fragments), desc='Split matching', total=len(fragments))
+    matched_fragments = list(filter(lambda f: f is not None, matched_fragments))
 
     def phrase_similarity(a, b, direction):
         return similarity(a,
@@ -352,7 +340,7 @@ def main(args):
         best = max((v, i) for i, v in enumerate(similarities))[1] if n > 0 else 0
         return best, similarities
 
-    for index in range(len(matched_fragments) + 1):
+    for index in progress(range(len(matched_fragments) + 1), desc='Fine alignment'):
         if index > 0:
             a = matched_fragments[index - 1]
             a_start, a_end = a['match-start'], a['match-end']
@@ -389,8 +377,29 @@ def main(args):
             a['match-end'] = a_best_end
         if b:
             b['match-start'] = b_best_start
+            
+    def apply_number(number_key, index, fragment, show, get_value):
+        kl = number_key.lower()
+        should_output = getattr(args, 'output_' + kl)
+        min_val, max_val = getattr(args, 'output_min_' + kl), getattr(args, 'output_max_' + kl)
+        if should_output or min_val or max_val:
+            val = get_value()
+            if len(number_key) == 3:
+                show.insert(0, '{}: {:.2f}'.format(number_key, val))
+                if should_output:
+                    fragment[kl] = val
+            reason_base = '{} ({})'.format(named_numbers[number_key][0], number_key)
+            reason = None
+            if min_val and val < min_val:
+                reason = reason_base + ' too low'
+            elif max_val and val > max_val:
+                reason = reason_base + ' too high'
+            if reason:
+                skip(index, reason)
+                return True
+        return False
 
-    for fragment in fragments:
+    for fragment in progress(matched_fragments, desc='Writing output'):
         index = fragment['index']
         time_start = fragment['start']
         time_end = fragment['end']
@@ -401,7 +410,7 @@ def main(args):
         }
         sample_numbers = []
 
-        if should_skip('tlen', index, sample_numbers, lambda: len(fragment_transcript)):
+        if apply_number('tlen', index, result_fragment, sample_numbers, lambda: len(fragment_transcript)):
             continue
         if args.output_stt:
             result_fragment['transcript'] = fragment_transcript
@@ -419,15 +428,15 @@ def main(args):
             result_fragment['aligned-raw'] = original_transcript[original_start:original_end]
 
         fragment_matched = tc.clean_text[match_start:match_end]
-        if should_skip('mlen', index, sample_numbers, lambda: len(fragment_matched)):
+        if apply_number('mlen', index, result_fragment, sample_numbers, lambda: len(fragment_matched)):
             continue
         if args.output_aligned:
             result_fragment['aligned'] = fragment_matched
 
-        if should_skip('SWS', index, sample_numbers, lambda: 100 * fragment['sws']):
+        if apply_number('SWS', index, result_fragment, sample_numbers, lambda: 100 * fragment['sws']):
             continue
 
-        if should_skip('WNG', index, sample_numbers,
+        if apply_number('WNG', index, result_fragment, sample_numbers,
                        lambda: 100 * similarity(fragment_matched,
                                                 fragment_transcript,
                                                 min_ngram_size=args.output_wng_min_ngram_size,
@@ -436,12 +445,12 @@ def main(args):
                                                 position_factor=args.output_wng_ngram_position_factor)):
             continue
 
-        if should_skip('CER', index, sample_numbers,
+        if apply_number('CER', index, result_fragment, sample_numbers,
                        lambda: 100 * levenshtein(fragment_transcript, fragment_matched) /
                                len(fragment_matched)):
             continue
 
-        if should_skip('WER', index, sample_numbers,
+        if apply_number('WER', index, result_fragment, sample_numbers,
                        lambda: 100 * levenshtein(fragment_transcript.split(), fragment_matched.split()) /
                                len(fragment_matched.split())):
             continue

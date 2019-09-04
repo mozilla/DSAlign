@@ -50,33 +50,52 @@ class Alphabet(object):
 
 
 class TextCleaner(object):
-    def __init__(self, original_text, alphabet, to_lower=True, normalize_space=True, dashes_to_ws=True):
-        self.original_text = original_text
-        prepared_text = original_text.lower() if to_lower else original_text
-        cleaned = []
+    def __init__(self, alphabet, to_lower=True, normalize_space=True, dashes_to_ws=True):
+        self.alphabet = alphabet
+        self.to_lower = to_lower
+        self.normalize_space = normalize_space
+        self.dashes_to_ws = dashes_to_ws
+        self.original_text = ''
+        self.clean_text = ''
         self.positions = []
+        self.meta = []
+
+    def add_original_text(self, original_text, meta=None):
+        self.original_text += original_text
+        prepared_text = original_text.lower() if self.to_lower else original_text
+        cleaned = []
         ws = False
         for position, c in enumerate(prepared_text):
-            if dashes_to_ws and c == '-' and not alphabet.has_label('-'):
+            if self.dashes_to_ws and c == '-' and not self.alphabet.has_label('-'):
                 c = ' '
-            if normalize_space and c.isspace():
+            if self.normalize_space and c.isspace():
                 if ws:
                     continue
                 else:
                     ws = True
                     c = ' '
-            if not alphabet.has_label(c):
+            if not self.alphabet.has_label(c):
                 continue
             if not c.isspace():
                 ws = False
             cleaned.append(c)
             self.positions.append(position)
-        self.clean_text = ''.join(cleaned)
+            self.meta.append(meta)
+        self.clean_text += ''.join(cleaned)
 
     def get_original_offset(self, clean_offset):
         if clean_offset == len(self.positions):
-            return self.positions[-1]+1
+            return self.positions[-1] + 1
         return self.positions[clean_offset]
+
+    def get_meta(self, from_clean_offset, to_clean_offset=None):
+        if to_clean_offset is None:
+            return self.meta[from_clean_offset]
+        metas = []
+        for meta in self.metas[from_clean_offset:to_clean_offset + 1]:
+            if meta is not None and meta not in metas:
+                metas.append(meta)
+        return metas
 
 
 class TextRange(object):
