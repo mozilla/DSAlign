@@ -37,12 +37,12 @@ def stt(sample):
 def main(args):
     parser = argparse.ArgumentParser(description='Force align speech data with a transcript.')
 
-    parser.add_argument('audio', type=str,
-                        help='Source path of speech audio (WAV format)')
-    parser.add_argument('transcript', type=str,
-                        help='Source path of original transcript (plain text)')
+    parser.add_argument('unaligned', type=str,
+                        help='Path to speech audio (WAV format) or a transcript log (.tlog)')
+    parser.add_argument('text', type=str,
+                        help='Path to original transcript (plain text or .script file)')
     parser.add_argument('result', type=str,
-                        help='Target path of alignment result file (JSON)')
+                        help='Where to write the alignment result file (JSON)')
 
     parser.add_argument('--loglevel', type=int, required=False, default=20,
                         help='Log level (between 0 and 50) - default: 20')
@@ -74,6 +74,9 @@ def main(args):
                            help='Maximum speech fragment duration in milliseconds to translate (default: no limit)')
 
     text_group = parser.add_argument_group(title='Text pre-processing options')
+    text_group.add_argument('--text-meaningful-newlines', action="store_true",
+                            help='Newlines from plain text file separate phrases/speakers. '
+                                 '(see --align-phrase-snap-factor)')
     text_group.add_argument('--text-keep-dashes', action="store_true",
                             help='No replacing of dashes with spaces. Dependent of alphabet if kept at all.')
     text_group.add_argument('--text-keep-ws', action="store_true",
@@ -95,17 +98,24 @@ def main(args):
                              help='Gap score for Smith-Waterman alignment (default: -100)')
     align_group.add_argument('--align-stretch-fraction', type=float, required=False, default=1,
                              help='Length fraction of the fragment that it could get stretched for matching')
-    align_group.add_argument('--align-snap-factor', type=float, required=False, default=1.5,
+    align_group.add_argument('--align-word-snap-factor', type=float, required=False, default=1.5,
                              help='Priority factor for snapping matched texts to word boundaries '
                                   '(default: 1.5 - slightly snappy)')
+    align_group.add_argument('--align-phrase-snap-factor', type=float, required=False, default=2.5,
+                             help='Priority factor for snapping matched texts to word boundaries '
+                                  '(default: 2.5 - snappy)')
     align_group.add_argument('--align-min-ngram-size', type=int, required=False, default=1,
-                             help='Minimum N-gram size for weighted N-gram similarity during snapping (default: 1)')
+                             help='Minimum N-gram size for weighted N-gram similarity '
+                                  'during fine-alignment (default: 1)')
     align_group.add_argument('--align-max-ngram-size', type=int, required=False, default=3,
-                             help='Maximum N-gram size for weighted N-gram similarity during snapping (default: 3)')
+                             help='Maximum N-gram size for weighted N-gram similarity '
+                                  'during fine-alignment (default: 3)')
     align_group.add_argument('--align-ngram-size-factor', type=float, required=False, default=1,
-                             help='Size weight for weighted N-gram similarity during snapping (default: 1)')
+                             help='Size weight for weighted N-gram similarity '
+                                  'during fine-alignment (default: 1)')
     align_group.add_argument('--align-ngram-position-factor', type=float, required=False, default=2.5,
-                             help='Position weight for weighted N-gram similarity during snapping (default: 1)')
+                             help='Position weight for weighted N-gram similarity '
+                                  'during fine-alignment (default: 1)')
 
     output_group = parser.add_argument_group(title='Output options')
     output_group.add_argument('--output-stt', action="store_true",
@@ -160,24 +170,34 @@ def main(args):
     logging.debug("Loading alphabet from %s..." % alphabet_path)
     alphabet = Alphabet(alphabet_path)
 
-    logging.debug("Loading original transcript from %s..." % args.transcript)
-    with open(args.transcript, 'r') as transcript_file:
-        original_transcript = transcript_file.read()
+    logging.debug("Loading original transcript from %s..." % args.text)
     tc = TextCleaner(alphabet,
                      dashes_to_ws=not args.text_keep_dashes,
                      normalize_space=not args.text_keep_ws,
                      to_lower=not args.text_keep_casing)
-    tc.add_original_text(original_transcript)
-    clean_text_path = args.transcript + '.clean'
+    with open(args.text, 'r') as text_file:
+        content = text_file.read()
+        if args.text.endswith('.script'):
+            for phrase in json.loads(text_file.read()):
+                tc.add_original_text(phrase.text, meta=phrase)
+        elif args.text_meaningful_newlines:
+            for phrase in content.split('\n'):
+                tc.add_original_text(phrase)
+        else:
+            tc.add_original_text(content)
+    clean_text_path = args.text + '.clean'
     with open(clean_text_path, 'w') as clean_text_file:
         clean_text_file.write(tc.clean_text)
 
-    transcription_log = os.path.splitext(args.audio)[0] + '.tlog'
+    if args.unaligned.endswith('.tlog'):
+        transcription_log = args.unaligned
+    else:
+        transcription_log = os.path.splitext(args.unaligned)[0] + '.tlog'
     if path.exists(transcription_log):
         logging.debug("Loading transcription log from %s..." % transcription_log)
-        with open(transcription_log, 'r') as transcriptions_file:
-            fragments = json.loads(transcriptions_file.read())
-    else:
+        with open(transcription_log, 'r') as transcription_log_file:
+            fragments = json.loads(transcription_log_file.read())
+    elif not args.unaligned.endswith('.tlog'):
         kenlm_path = 'dependencies/kenlm/build/bin'
         if not path.exists(kenlm_path):
             kenlm_path = None
@@ -185,7 +205,7 @@ def main(args):
         if not path.exists(deepspeech_path):
             deepspeech_path = None
         if kenlm_path and deepspeech_path and not args.stt_no_own_lm:
-            arpa_path = args.transcript + '.arpa'
+            arpa_path = args.text + '.arpa'
             if not path.exists(arpa_path):
                 subprocess.check_call([
                     kenlm_path + '/lmplz',
@@ -197,7 +217,7 @@ def main(args):
                     '5'
                 ])
 
-            lm_path = args.transcript + '.lm'
+            lm_path = args.text + '.lm'
             if not path.exists(lm_path):
                 subprocess.check_call([
                     kenlm_path + '/build_binary',
@@ -206,7 +226,7 @@ def main(args):
                     lm_path
                 ])
 
-            trie_path = args.transcript + '.trie'
+            trie_path = args.text + '.trie'
             if not path.exists(trie_path):
                 subprocess.check_call([
                     deepspeech_path + '/generate_trie',
@@ -226,9 +246,8 @@ def main(args):
 
         # Run VAD on the input file
         logging.debug("Transcribing VAD segments...")
-        wave_file = args.audio
         aggressiveness = int(args.audio_vad_aggressiveness) if args.audio_vad_aggressiveness else 3
-        segments, rate, audio_length = wavTranscriber.vad_segment_generator(wave_file, aggressiveness)
+        segments, rate, audio_length = wavTranscriber.vad_segment_generator(args.unaligned, aggressiveness)
 
         pool = multiprocessing.Pool(initializer=init_stt,
                                     initargs=(output_graph_path, alphabet_path, lm_path, trie_path, rate),
@@ -265,6 +284,9 @@ def main(args):
         logging.debug("Writing transcription log to file %s..." % transcription_log)
         with open(transcription_log, 'w') as transcriptions_file:
             transcriptions_file.write(json.dumps(fragments))
+    else:
+        logging.fatal('Problem loading transcript from "{}"'.format(transcription_log))
+        exit(1)
 
     search = FuzzySearch(tc.clean_text,
                          max_candidates=args.align_max_candidates,
@@ -330,13 +352,15 @@ def main(args):
                           size_factor=args.align_ngram_size_factor,
                           position_factor=args.align_ngram_position_factor)
 
-    def get_similarities(a, b, gap_text, direction):
+    def get_similarities(a, b, gap_text, gap_meta, direction):
         if direction < 0:
-            a, b, gap_text = a[::-1], b[::-1], gap_text[::-1]
+            a, b, gap_text, gap_meta = a[::-1], b[::-1], gap_text[::-1], gap_meta[::-1]
         n = min(len(gap_text), int(args.align_stretch_fraction * len(b)))
-        similarities = list(map(lambda i: (args.align_snap_factor if gap_text[i] == ' ' else 1) *
-                                          phrase_similarity(a, b + gap_text[:i], 1),
-                                range(n)))
+        similarities = list(map(
+            lambda i: (args.align_word_snap_factor if gap_text[i] == ' ' else 1) *
+                      (args.align_phrase_snap_factor if gap_meta[i] is None else 1) *
+                      (phrase_similarity(a, b + gap_text[:i], 1)),
+            range(n)))
         best = max((v, i) for i, v in enumerate(similarities))[1] if n > 0 else 0
         return best, similarities
 
@@ -355,15 +379,24 @@ def main(args):
             b_start = b_end = len(search.text)
 
         assert a_end <= b_start
-        gap_text = search.text[a_end:b_start]
+        gap_text = tc.clean_text[a_end:b_start]
         if a_end == b_start or len(gap_text.strip()) == 0:
             continue
+        gap_meta = tc.meta[a_end:b_start]
 
         if a:
-            a_best_index, a_similarities = get_similarities(a['transcript'], search.text[a_start:a_end], gap_text, 1)
+            a_best_index, a_similarities = get_similarities(a['transcript'],
+                                                            tc.clean_text[a_start:a_end],
+                                                            gap_text,
+                                                            gap_meta,
+                                                            1)
             a_best_end = a_best_index + a_end
         if b:
-            b_best_index, b_similarities = get_similarities(b['transcript'], search.text[b_start:b_end], gap_text, -1)
+            b_best_index, b_similarities = get_similarities(b['transcript'],
+                                                            tc.clean_text[b_start:b_end],
+                                                            gap_text,
+                                                            gap_meta,
+                                                            -1)
             b_best_start = b_start - b_best_index
 
         if a and b and a_best_end > b_best_start:

@@ -61,10 +61,16 @@ class TextCleaner(object):
         self.meta = []
 
     def add_original_text(self, original_text, meta=None):
-        self.original_text += original_text
-        prepared_text = original_text.lower() if self.to_lower else original_text
+        if len(self.positions) > 0:
+            self.clean_text += ' '
+            self.original_text += ' '
+            self.positions.append(len(self.original_text) - 1)
+            self.meta.append(None)
+            ws = True
+        else:
+            ws = False
         cleaned = []
-        ws = False
+        prepared_text = original_text.lower() if self.to_lower else original_text
         for position, c in enumerate(prepared_text):
             if self.dashes_to_ws and c == '-' and not self.alphabet.has_label('-'):
                 c = ' '
@@ -79,8 +85,9 @@ class TextCleaner(object):
             if not c.isspace():
                 ws = False
             cleaned.append(c)
-            self.positions.append(position)
+            self.positions.append(len(self.original_text) + position)
             self.meta.append(meta)
+        self.original_text += original_text
         self.clean_text += ''.join(cleaned)
 
     def get_original_offset(self, clean_offset):
@@ -88,11 +95,11 @@ class TextCleaner(object):
             return self.positions[-1] + 1
         return self.positions[clean_offset]
 
-    def get_meta(self, from_clean_offset, to_clean_offset=None):
+    def collect_meta(self, from_clean_offset, to_clean_offset=None):
         if to_clean_offset is None:
             return self.meta[from_clean_offset]
         metas = []
-        for meta in self.metas[from_clean_offset:to_clean_offset + 1]:
+        for meta in self.meta[from_clean_offset:to_clean_offset + 1]:
             if meta is not None and meta not in metas:
                 metas.append(meta)
         return metas
