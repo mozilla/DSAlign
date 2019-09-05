@@ -456,9 +456,22 @@ def main(args):
         original_end = tc.get_original_offset(match_end)
         result_fragment['text-start'] = original_start
         result_fragment['text-end'] = original_end
+        meta_dict = {}
+        for meta in tc.collect_meta(match_start, match_end):
+            for key in meta.keys():
+                if key == 'text':
+                    continue
+                if key in meta_dict:
+                    values = meta_dict[key]
+                else:
+                    values = meta_dict[key] = []
+                value = meta[key]
+                if not value in values:
+                    values.append(value)
+        result_fragment['meta'] = meta_dict
 
         if args.output_aligned_raw:
-            result_fragment['aligned-raw'] = original_transcript[original_start:original_end]
+            result_fragment['aligned-raw'] = tc.original_text[original_start:original_end]
 
         fragment_matched = tc.clean_text[match_start:match_end]
         if apply_number('mlen', index, result_fragment, sample_numbers, lambda: len(fragment_matched)):
