@@ -178,8 +178,8 @@ def main(args):
     with open(args.text, 'r') as text_file:
         content = text_file.read()
         if args.text.endswith('.script'):
-            for phrase in json.loads(text_file.read()):
-                tc.add_original_text(phrase.text, meta=phrase)
+            for phrase in json.loads(content):
+                tc.add_original_text(phrase['text'], meta=phrase)
         elif args.text_meaningful_newlines:
             for phrase in content.split('\n'):
                 tc.add_original_text(phrase)
@@ -504,7 +504,7 @@ def main(args):
                                    args.audio,
                                    'trim',
                                    str(time_start / 1000.0),
-                                   '='+str(time_end / 1000.0)])
+                                   '=' + str(time_end / 1000.0)])
     with open(args.result, 'w') as result_file:
         result_file.write(json.dumps(result_fragments))
 
