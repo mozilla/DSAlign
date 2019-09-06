@@ -415,6 +415,8 @@ def main(args):
         kl = number_key.lower()
         should_output = getattr(args, 'output_' + kl)
         min_val, max_val = getattr(args, 'output_min_' + kl), getattr(args, 'output_max_' + kl)
+        if kl.endswith('len') and min_val is None:
+            min_val = 1
         if should_output or min_val or max_val:
             val = get_value()
             if len(number_key) == 3:
