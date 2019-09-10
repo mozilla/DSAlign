@@ -2,3 +2,4 @@ six
 deepspeech
 webrtcvad
 tqdm
+textdistance

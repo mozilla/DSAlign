@@ -6,6 +6,7 @@ import argparse
 import subprocess
 import os.path as path
 import numpy as np
+import textdistance
 import wavTranscriber
 import multiprocessing
 from collections import Counter
@@ -104,42 +105,46 @@ def main(args):
     align_group.add_argument('--align-phrase-snap-factor', type=float, required=False, default=2.5,
                              help='Priority factor for snapping matched texts to word boundaries '
                                   '(default: 2.5 - snappy)')
-    align_group.add_argument('--align-min-ngram-size', type=int, required=False, default=1,
+    align_group.add_argument('--align-similarity-algo', type=str, required=False, default='wng',
+                             help='Similarity algorithm during fine-alignment - one of '
+                                  'wng|editex|levenshtein|mra|hamming|jaro_winkler (default: wng)')
+    align_group.add_argument('--align-wng-min-size', type=int, required=False, default=1,
                              help='Minimum N-gram size for weighted N-gram similarity '
                                   'during fine-alignment (default: 1)')
-    align_group.add_argument('--align-max-ngram-size', type=int, required=False, default=3,
+    align_group.add_argument('--align-wng-max-size', type=int, required=False, default=3,
                              help='Maximum N-gram size for weighted N-gram similarity '
                                   'during fine-alignment (default: 3)')
-    align_group.add_argument('--align-ngram-size-factor', type=float, required=False, default=1,
+    align_group.add_argument('--align-wng-size-factor', type=float, required=False, default=1,
                              help='Size weight for weighted N-gram similarity '
                                   'during fine-alignment (default: 1)')
-    align_group.add_argument('--align-ngram-position-factor', type=float, required=False, default=2.5,
+    align_group.add_argument('--align-wng-position-factor', type=float, required=False, default=2.5,
                              help='Position weight for weighted N-gram similarity '
-                                  'during fine-alignment (default: 1)')
+                                  'during fine-alignment (default: 2.5)')
 
     output_group = parser.add_argument_group(title='Output options')
+    output_group.add_argument('--output-pretty', action="store_true",
+                              help='Writes indented JSON output"')
     output_group.add_argument('--output-stt', action="store_true",
                               help='Writes STT transcripts to result file as attribute "transcript"')
     output_group.add_argument('--output-aligned', action="store_true",
                               help='Writes clean aligned original transcripts to result file')
     output_group.add_argument('--output-aligned-raw', action="store_true",
                               help='Writes raw aligned original transcripts to result file')
-    output_group.add_argument('--output-wng-min-ngram-size', type=int, required=False, default=1,
-                              help='Minimum N-gram size for weighted N-gram similarity filter (default: 1)')
-    output_group.add_argument('--output-wng-max-ngram-size', type=int, required=False, default=3,
-                              help='Maximum N-gram size for weighted N-gram similarity filter (default: 3)')
-    output_group.add_argument('--output-wng-ngram-size-factor', type=int, required=False, default=1,
-                              help='Size weight for weighted N-gram similarity filter (default: 1)')
-    output_group.add_argument('--output-wng-ngram-position-factor', type=int, required=False, default=3,
-                              help='Position weight for weighted N-gram similarity filter (default: 3)')
 
+    algos = ['WNG', 'jaro_winkler', 'editex', 'levenshtein', 'mra', 'hamming']
+    sim_desc = 'From 0.0 (not equal at all) to 100.0 (totally equal)'
     named_numbers = {
-        'tlen': ('transcript length',          int,   None),
-        'mlen': ('match length',               int,   None),
-        'SWS':  ('Smith-Waterman score',       float, 'From 0.0 (not equal at all) to 100.0+ (pretty equal)'),
-        'WNG':  ('weighted N-gram similarity', float, 'From 0.0 (not equal at all) to 100.0 (totally equal)'),
-        'CER':  ('character error rate',       float, 'From 0.0 (no different words) to 100.0+ (total miss)'),
-        'WER':  ('word error rate',            float, 'From 0.0 (no wrong characters) to 100.0+ (total miss)')
+        'tlen':         ('transcript length',          int,   None),
+        'mlen':         ('match length',               int,   None),
+        'SWS':          ('Smith-Waterman score',       float, 'From 0.0 (not equal at all) to 100.0+ (pretty equal)'),
+        'WNG':          ('weighted N-gram similarity', float, sim_desc),
+        'jaro_winkler': ('Jaro-Winkler similarity',    float, sim_desc),
+        'editex':       ('Editex similarity',          float, sim_desc),
+        'levenshtein':  ('Levenshtein similarity',     float, sim_desc),
+        'mra':          ('MRA similarity',             float, sim_desc),
+        'hamming':      ('Hamming similarity',         float, sim_desc),
+        'CER':          ('character error rate',       float, 'From 0.0 (no different words) to 100.0+ (total miss)'),
+        'WER':          ('word error rate',            float, 'From 0.0 (no wrong characters) to 100.0+ (total miss)')
     }
 
     for short in named_numbers.keys():
@@ -283,7 +288,7 @@ def main(args):
 
         logging.debug("Writing transcription log to file %s..." % transcription_log)
         with open(transcription_log, 'w') as transcriptions_file:
-            transcriptions_file.write(json.dumps(fragments))
+            transcriptions_file.write(json.dumps(fragments, indent=4 if args.output_pretty else None))
     else:
         logging.fatal('Problem loading transcript from "{}"'.format(transcription_log))
         exit(1)
@@ -343,14 +348,27 @@ def main(args):
     matched_fragments = progress(split_match(fragments), desc='Split matching', total=len(fragments))
     matched_fragments = list(filter(lambda f: f is not None, matched_fragments))
 
-    def phrase_similarity(a, b, direction):
-        return similarity(a,
-                          b,
-                          direction=direction,
-                          min_ngram_size=args.align_min_ngram_size,
-                          max_ngram_size=args.align_max_ngram_size,
-                          size_factor=args.align_ngram_size_factor,
-                          position_factor=args.align_ngram_position_factor)
+    similarity_algos = {}
+
+    def phrase_similarity(algo, a, b):
+        if algo in similarity_algos:
+            return similarity_algos[algo](a, b)
+        algo_impl = lambda aa, bb: None
+        if algo == 'wng':
+            algo_impl = similarity_algos[algo] = lambda aa, bb: similarity(
+                aa,
+                bb,
+                direction=1,
+                min_ngram_size=args.align_wng_min_size,
+                max_ngram_size=args.align_wng_max_size,
+                size_factor=args.align_wng_size_factor,
+                position_factor=args.align_wng_position_factor)
+        elif algo in algos:
+            algo_impl = similarity_algos[algo] = getattr(textdistance, algo).normalized_similarity
+        else:
+            logging.fatal('Unknown similarity metric "{}"'.format(algo))
+            exit(1)
+        return algo_impl(a, b)
 
     def get_similarities(a, b, gap_text, gap_meta, direction):
         if direction < 0:
@@ -359,7 +377,7 @@ def main(args):
         similarities = list(map(
             lambda i: (args.align_word_snap_factor if gap_text[i] == ' ' else 1) *
                       (args.align_phrase_snap_factor if gap_meta[i] is None else 1) *
-                      (phrase_similarity(a, b + gap_text[:i], 1)),
+                      (phrase_similarity(args.align_similarity_algo, a, b + gap_text[:i])),
             range(n)))
         best = max((v, i) for i, v in enumerate(similarities))[1] if n > 0 else 0
         return best, similarities
@@ -419,7 +437,7 @@ def main(args):
             min_val = 1
         if should_output or min_val or max_val:
             val = get_value()
-            if len(number_key) == 3:
+            if not kl.endswith('len'):
                 show.insert(0, '{}: {:.2f}'.format(number_key, val))
                 if should_output:
                     fragment[kl] = val
@@ -484,23 +502,21 @@ def main(args):
         if apply_number('SWS', index, result_fragment, sample_numbers, lambda: 100 * fragment['sws']):
             continue
 
-        if apply_number('WNG', index, result_fragment, sample_numbers,
-                       lambda: 100 * similarity(fragment_matched,
-                                                fragment_transcript,
-                                                min_ngram_size=args.output_wng_min_ngram_size,
-                                                max_ngram_size=args.output_wng_max_ngram_size,
-                                                size_factor=args.output_wng_ngram_size_factor,
-                                                position_factor=args.output_wng_ngram_position_factor)):
+        skip = False
+        for algo in algos:
+            skip = skip or apply_number(algo, index, result_fragment, sample_numbers,
+                                        lambda: 100 * phrase_similarity(algo, fragment_matched, fragment_transcript))
+        if skip:
             continue
 
         if apply_number('CER', index, result_fragment, sample_numbers,
-                       lambda: 100 * levenshtein(fragment_transcript, fragment_matched) /
-                               len(fragment_matched)):
+                        lambda: 100 * levenshtein(fragment_transcript, fragment_matched) /
+                                len(fragment_matched)):
             continue
 
         if apply_number('WER', index, result_fragment, sample_numbers,
-                       lambda: 100 * levenshtein(fragment_transcript.split(), fragment_matched.split()) /
-                               len(fragment_matched.split())):
+                        lambda: 100 * levenshtein(fragment_transcript.split(), fragment_matched.split()) /
+                                len(fragment_matched.split())):
             continue
 
         substitutions += fragment['substitutions']
@@ -521,7 +537,7 @@ def main(args):
                                    str(time_start / 1000.0),
                                    '=' + str(time_end / 1000.0)])
     with open(args.result, 'w') as result_file:
-        result_file.write(json.dumps(result_fragments))
+        result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None))
 
     logging.info('Aligned %d fragments' % len(result_fragments))
     skipped = len(fragments) - len(result_fragments)
