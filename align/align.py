@@ -480,10 +480,13 @@ def main(args):
         if args.output_stt:
             result_fragment['transcript'] = fragment_transcript
 
-        if 'match-start' not in fragment:
+        if 'match-start' not in fragment or 'match-end' not in fragment:
             skip(index, 'No match for transcript')
             continue
         match_start, match_end = fragment['match-start'], fragment['match-end']
+        if match_end - match_start <= 0:
+            skip(index, 'Empty match for transcript')
+            continue
         original_start = tc.get_original_offset(match_start)
         original_end = tc.get_original_offset(match_end)
         result_fragment['text-start'] = original_start
@@ -553,7 +556,8 @@ def main(args):
 
     logging.info('Aligned %d fragments' % len(result_fragments))
     skipped = len(fragments) - len(result_fragments)
-    logging.info('Skipped %d fragments (%.2f%%):' % (skipped, skipped * 100.0 / len(fragments)))
+    if len(fragments) > 0 and skipped > 0:
+        logging.info('Skipped %d fragments (%.2f%%):' % (skipped, skipped * 100.0 / len(fragments)))
     for key, number in statistics.most_common():
         logging.info(' - %s: %d' % (key, number))
 
