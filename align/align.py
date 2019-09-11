@@ -104,9 +104,9 @@ def main(args):
     align_group.add_argument('--align-word-snap-factor', type=float, required=False, default=1.5,
                              help='Priority factor for snapping matched texts to word boundaries '
                                   '(default: 1.5 - slightly snappy)')
-    align_group.add_argument('--align-phrase-snap-factor', type=float, required=False, default=1.5,
+    align_group.add_argument('--align-phrase-snap-factor', type=float, required=False, default=1.0,
                              help='Priority factor for snapping matched texts to word boundaries '
-                                  '(default: 1.5 - snappy)')
+                                  '(default: 1.0 - no snapping)')
     align_group.add_argument('--align-similarity-algo', type=str, required=False, default='wng',
                              help='Similarity algorithm during fine-alignment - one of '
                                   'wng|editex|levenshtein|mra|hamming|jaro_winkler (default: wng)')
