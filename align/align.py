@@ -97,14 +97,16 @@ def main(args):
                              help='Mismatch score for Smith-Waterman alignment (default: -100)')
     align_group.add_argument('--align-gap-score', type=int, required=False, default=-100,
                              help='Gap score for Smith-Waterman alignment (default: -100)')
-    align_group.add_argument('--align-stretch-fraction', type=float, required=False, default=1,
-                             help='Length fraction of the fragment that it could get stretched for matching')
+    align_group.add_argument('--align-shrink-fraction', type=float, required=False, default=0.1,
+                             help='Length fraction of the fragment that it could get shrinked during fine alignment')
+    align_group.add_argument('--align-stretch-fraction', type=float, required=False, default=0.25,
+                             help='Length fraction of the fragment that it could get stretched during fine alignment')
     align_group.add_argument('--align-word-snap-factor', type=float, required=False, default=1.5,
                              help='Priority factor for snapping matched texts to word boundaries '
                                   '(default: 1.5 - slightly snappy)')
-    align_group.add_argument('--align-phrase-snap-factor', type=float, required=False, default=2.5,
+    align_group.add_argument('--align-phrase-snap-factor', type=float, required=False, default=1.5,
                              help='Priority factor for snapping matched texts to word boundaries '
-                                  '(default: 2.5 - snappy)')
+                                  '(default: 1.5 - snappy)')
     align_group.add_argument('--align-similarity-algo', type=str, required=False, default='wng',
                              help='Similarity algorithm during fine-alignment - one of '
                                   'wng|editex|levenshtein|mra|hamming|jaro_winkler (default: wng)')
@@ -246,9 +248,6 @@ def main(args):
         logging.debug('Loading acoustic model from "%s", alphabet from "%s" and language model from "%s"...' %
                       (output_graph_path, alphabet_path, lm_path))
 
-        inference_time = 0.0
-        offset = 0
-
         # Run VAD on the input file
         logging.debug("Transcribing VAD segments...")
         aggressiveness = int(args.audio_vad_aggressiveness) if args.audio_vad_aggressiveness else 3
@@ -354,7 +353,7 @@ def main(args):
         if algo in similarity_algos:
             return similarity_algos[algo](a, b)
         algo_impl = lambda aa, bb: None
-        if algo == 'wng':
+        if algo.lower() == 'wng':
             algo_impl = similarity_algos[algo] = lambda aa, bb: similarity(
                 aa,
                 bb,
@@ -370,14 +369,13 @@ def main(args):
             exit(1)
         return algo_impl(a, b)
 
-    def get_similarities(a, b, gap_text, gap_meta, direction):
+    def get_similarities(a, b, n, gap_text, gap_meta, direction):
         if direction < 0:
             a, b, gap_text, gap_meta = a[::-1], b[::-1], gap_text[::-1], gap_meta[::-1]
-        n = min(len(gap_text), int(args.align_stretch_fraction * len(b)))
         similarities = list(map(
-            lambda i: (args.align_word_snap_factor if gap_text[i] == ' ' else 1) *
-                      (args.align_phrase_snap_factor if gap_meta[i] is None else 1) *
-                      (phrase_similarity(args.align_similarity_algo, a, b + gap_text[:i])),
+            lambda i: (args.align_word_snap_factor if gap_text[i + 1] == ' ' else 1) *
+                      (args.align_phrase_snap_factor if gap_meta[i + 1] is None else 1) *
+                      (phrase_similarity(args.align_similarity_algo, a, b + gap_text[1:i + 1])),
             range(n)))
         best = max((v, i) for i, v in enumerate(similarities))[1] if n > 0 else 0
         return best, similarities
@@ -386,25 +384,38 @@ def main(args):
         if index > 0:
             a = matched_fragments[index - 1]
             a_start, a_end = a['match-start'], a['match-end']
+            a_len = a_end - a_start
+            a_stretch = int(a_len * args.align_stretch_fraction)
+            a_shrink = int(a_len * args.align_shrink_fraction)
+            a_end = a_end - a_shrink
+            a_ext = a_shrink + a_stretch
         else:
             a = None
             a_start = a_end = 0
         if index < len(matched_fragments):
             b = matched_fragments[index]
             b_start, b_end = b['match-start'], b['match-end']
+            b_len = b_end - b_start
+            b_stretch = int(b_len * args.align_stretch_fraction)
+            b_shrink = int(b_len * args.align_shrink_fraction)
+            b_start = b_start + b_shrink
+            b_ext = b_shrink + b_stretch
         else:
             b = None
             b_start = b_end = len(search.text)
 
         assert a_end <= b_start
-        gap_text = tc.clean_text[a_end:b_start]
-        if a_end == b_start or len(gap_text.strip()) == 0:
+        assert a_start <= a_end
+        assert b_start <= b_end
+        if a_end == b_start or a_start == a_end or b_start == b_end:
             continue
-        gap_meta = tc.meta[a_end:b_start]
+        gap_text = tc.clean_text[a_end - 1:b_start + 1]
+        gap_meta = tc.meta[a_end - 1:b_start + 1]
 
         if a:
             a_best_index, a_similarities = get_similarities(a['transcript'],
                                                             tc.clean_text[a_start:a_end],
+                                                            min(len(gap_text) - 1, a_ext),
                                                             gap_text,
                                                             gap_meta,
                                                             1)
@@ -412,6 +423,7 @@ def main(args):
         if b:
             b_best_index, b_similarities = get_similarities(b['transcript'],
                                                             tc.clean_text[b_start:b_end],
+                                                            min(len(gap_text) - 1, b_ext),
                                                             gap_text,
                                                             gap_meta,
                                                             -1)
