@@ -517,11 +517,13 @@ def main(args):
         if apply_number('SWS', index, result_fragment, sample_numbers, lambda: 100 * fragment['sws']):
             continue
 
-        skip = False
+        should_skip = False
         for algo in algos:
-            skip = skip or apply_number(algo, index, result_fragment, sample_numbers,
-                                        lambda: 100 * phrase_similarity(algo, fragment_matched, fragment_transcript))
-        if skip:
+            should_skip = should_skip or apply_number(algo, index, result_fragment, sample_numbers,
+                                                      lambda: 100 * phrase_similarity(algo,
+                                                                                      fragment_matched,
+                                                                                      fragment_transcript))
+        if should_skip:
             continue
 
         if apply_number('CER', index, result_fragment, sample_numbers,
