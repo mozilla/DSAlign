@@ -1,0 +1,12 @@
+[
+  {
+    "audio": "test1/joined.mp3",
+    "text": "test1/transcript.txt",
+    "aligned": "test1/aligned.json"
+  },
+  {
+    "audio": "test2/joined.mp3",
+    "text": "test2/transcript.script",
+    "aligned": "test2/aligned.json"
+  }
+]

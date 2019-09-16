@@ -1,6 +1,7 @@
 models
-data
 dependencies
+data/test*
+data/export
 
 .idea
 
