@@ -345,7 +345,7 @@ def main(args):
                         entry['transcript-raw'] = fragment['aligned-raw']
                     entries.append(entry)
                 with open(json_path, 'w') as json_file:
-                    json.dump(entries, json_file)
+                    json.dump(entries, json_file, indent=4 if args.pretty else None)
         else:
             csv_path = path.join(target_dir, list_name + '.csv')
             if dry_run:
