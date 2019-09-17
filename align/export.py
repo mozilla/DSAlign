@@ -266,7 +266,7 @@ def main(args):
         else:
             train_size, sample_size = get_set_sizes(len(partition_fragments))
             if args.split_field:
-                portions = engroup(partition_fragments, lambda f: get_meta(f, args.split_field)).values()
+                portions = list(engroup(partition_fragments, lambda f: get_meta(f, args.split_field)).values())
                 portions.sort(key=lambda p: len(p))
                 train_set, dev_set, test_set = [], [], []
                 for offset, sample_set in [(0, dev_set), (1, test_set)]:
