@@ -96,7 +96,8 @@ def main(args):
                         help='Sample meta field to group samples for debiasing (e.g. "speaker"). '
                              'Group sizes will be capped according to --debias-sigma-factor')
     parser.add_argument('--debias-sigma-factor', type=float, default=3.0,
-                        help='Standard deviation (sigma) factor after which the sample number of a group gets capped')
+                        help='Standard deviation (sigma) factor that will determine '
+                             'the maximum number of samples per group (see --debias).')
     parser.add_argument('--loglevel', type=int, default=20,
                         help='Log level (between 0 and 50) - default: 20')
     parser.add_argument('--no-progress', action="store_true",
