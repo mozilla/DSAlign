@@ -11,6 +11,7 @@ import os.path as path
 
 from tqdm import tqdm
 from pydub import AudioSegment
+from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
 
@@ -256,9 +257,13 @@ def main(args):
 
     def assign_fragments(frags, name):
         ensure_list(name)
+        duration = 0
         for f in frags:
             f['list-name'] = name
-        logging.info('Built set "{}" - samples: {}'.format(name, len(frags)))
+            duration += (f['end'] - f['start'])
+        logging.info('Built set "{}" (samples: {}, duration: {})'.format(name,
+                                                                         len(frags),
+                                                                         timedelta(milliseconds=duration)))
 
     if args.split_seed is not None:
         random.seed(args.split_seed)

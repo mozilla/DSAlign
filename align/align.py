@@ -43,7 +43,7 @@ def main(args):
     parser.add_argument('text', type=str,
                         help='Path to original transcript (plain text or .script file)')
     parser.add_argument('result', type=str,
-                        help='Where to write the alignment result file (JSON)')
+                        help='Where to write the alignment result file (typically suffixed ".aligned" - JSON format)')
 
     parser.add_argument('--loglevel', type=int, required=False, default=20,
                         help='Log level (between 0 and 50) - default: 20')
