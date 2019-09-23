@@ -329,7 +329,9 @@ def main(args):
             file_fragments.sort(key=lambda f: f['start'])
             for fragment in file_fragments:
                 if load_samples:
-                    yield audio[fragment['start']:fragment['end']], fragment
+                    start, end = fragment['start'], fragment['end']
+                    assert start < end <= len(audio)
+                    yield audio[start:end], fragment
                 else:
                     yield audio, fragment
 
@@ -373,6 +375,7 @@ def main(args):
             else:
                 with open(csv_path, 'w') as csv_file:
                     writer = csv.writer(csv_file)
+                    writer.writerow(['wav_filename', 'wav_filesize', 'transcript'])
                     for rel_path, file_size, fragment in group_list:
                         writer.writerow([rel_path, file_size, fragment['aligned']])
 
