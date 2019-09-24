@@ -1,36 +1,6 @@
 import collections
-import contextlib
-import wave
-
-
-def read_wave(path):
-    """Reads a .wav file.
-
-    Takes the path, and returns (PCM audio data, sample rate).
-    """
-    with contextlib.closing(wave.open(path, 'rb')) as wf:
-        num_channels = wf.getnchannels()
-        assert num_channels == 1
-        sample_width = wf.getsampwidth()
-        assert sample_width == 2
-        sample_rate = wf.getframerate()
-        assert sample_rate in (8000, 16000, 32000)
-        frames = wf.getnframes()
-        pcm_data = wf.readframes(frames)
-        duration = frames / sample_rate
-        return pcm_data, sample_rate, duration
-
-
-def write_wave(path, audio, sample_rate):
-    """Writes a .wav file.
-
-    Takes path, PCM audio data, and sample rate.
-    """
-    with contextlib.closing(wave.open(path, 'wb')) as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(audio)
+from webrtcvad import Vad
+from pydub import AudioSegment
 
 
 class Frame(object):
@@ -137,3 +107,22 @@ def vad_collector(sample_rate, frame_duration_ms,
               frame_duration_ms * (frame_index - len(voiced_frames)), \
               frame_duration_ms * (frame_index + 1)
 
+
+def vad_segment_generator(audio_file, aggressiveness):
+    """
+    Generate VAD segments. Filters out non-voiced audio frames.
+    :param audio_file: Input audio file to run VAD on.
+    :param aggressiveness: How aggressive filtering out non-speech is (between 0 and 3)
+    :return: Returns tuple of
+        segments: a bytearray of multiple smaller audio frames
+                  (The longer audio split into multiple smaller one's)
+        sample_rate: Sample rate of the input audio file
+        audio_length: Duration of the input audio file
+    """
+    audio = (AudioSegment.from_file(audio_file)
+                         .set_channels(1)
+                         .set_frame_rate(16000))
+    vad = Vad(int(aggressiveness))
+    frames = frame_generator(30, audio.raw_data, audio.frame_rate)
+    segments = vad_collector(audio.frame_rate, 30, 300, 0.5, vad, frames)
+    return segments, audio.frame_rate, audio.duration_seconds * 1000

@@ -1,7 +1,4 @@
 import glob
-import webrtcvad
-import logging
-import wavSplit
 from deepspeech import Model
 
 
@@ -53,25 +50,3 @@ def resolve_models(dir_name):
     lm = glob.glob(dir_name + "/lm.binary")[0]
     trie = glob.glob(dir_name + "/trie")[0]
     return pb, alphabet, lm, trie
-
-
-def vad_segment_generator(wav_file, aggressiveness):
-    """
-    Generate VAD segments. Filters out non-voiced audio frames.
-    :param wav_file: Input wav file to run VAD on.0
-    :param aggressiveness: How aggressive filtering out non-speech is (between 0 and 3)
-    :return: Returns tuple of
-        segments: a bytearray of multiple smaller audio frames
-                  (The longer audio split into multiple smaller one's)
-        sample_rate: Sample rate of the input audio file
-        audio_length: Duration of the input audio file
-    """
-    logging.debug("Caught the wav file @: %s" % wav_file)
-    audio, sample_rate, audio_length = wavSplit.read_wave(wav_file)
-    assert sample_rate == 16000, "Only 16000Hz input WAV files are supported for now!"
-    vad = webrtcvad.Vad(int(aggressiveness))
-    frames = wavSplit.frame_generator(30, audio, sample_rate)
-    frames = list(frames)
-    segments = wavSplit.vad_collector(sample_rate, 30, 300, 0.5, vad, frames)
-
-    return segments, sample_rate, audio_length
