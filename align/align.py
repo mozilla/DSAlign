@@ -277,8 +277,7 @@ def align(triple):
 
         if apply_number('tlen', index, result_fragment, sample_numbers, lambda: len(fragment_transcript)):
             continue
-        if args.output_stt:
-            result_fragment['transcript'] = fragment_transcript
+        result_fragment['transcript'] = fragment_transcript
 
         if 'match-start' not in fragment or 'match-end' not in fragment:
             skip(index, 'No match for transcript')
@@ -305,14 +304,12 @@ def align(triple):
                     values.append(value)
         result_fragment['meta'] = meta_dict
 
-        if args.output_aligned_raw:
-            result_fragment['aligned-raw'] = tc.original_text[original_start:original_end]
+        result_fragment['aligned-raw'] = tc.original_text[original_start:original_end]
 
         fragment_matched = tc.clean_text[match_start:match_end]
         if apply_number('mlen', index, result_fragment, sample_numbers, lambda: len(fragment_matched)):
             continue
-        if args.output_aligned:
-            result_fragment['aligned'] = fragment_matched
+        result_fragment['aligned'] = fragment_matched
 
         if apply_number('SWS', index, result_fragment, sample_numbers, lambda: 100 * fragment['sws']):
             continue
@@ -345,7 +342,6 @@ def align(triple):
             tc.clean_text[match_start - args.text_context:match_start],
             fragment_matched,
             tc.clean_text[match_end:match_end + args.text_context]))
-        start = match_end
         if args.play:
             subprocess.check_call(['play',
                                    '--no-show-progress',
@@ -464,12 +460,6 @@ def main():
     output_group = parser.add_argument_group(title='Output options')
     output_group.add_argument('--output-pretty', action="store_true",
                               help='Writes indented JSON output"')
-    output_group.add_argument('--output-stt', action="store_true",
-                              help='Writes STT transcripts to alignment result file as attribute "transcript"')
-    output_group.add_argument('--output-aligned', action="store_true",
-                              help='Writes clean aligned original transcripts to alignment result file')
-    output_group.add_argument('--output-aligned-raw', action="store_true",
-                              help='Writes raw aligned original transcripts to alignment result file')
 
     for short in named_numbers.keys():
         long, atype, desc = named_numbers[short]

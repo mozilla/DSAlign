@@ -314,7 +314,10 @@ All result samples are written to a JSON result file of the form:
     "start": 8646120,
     "end": 8647440,
     "text-start": 127949,
-    "text-end": 127967
+    "text-end": 127967,
+    "transcript": "this was a test",
+    "aligned": "this has a test",
+    "aligned-raw": "This has a test."
   },
   //...
 ]
@@ -329,12 +332,11 @@ aligned audio file
 aligned text document
 - `text-end`: Character offset of the end of the fragment's associated original text within the
 aligned text document
-
-`--output-stt` adds STT transcript as attribute `transcript` to array-entry
-
-`--output-aligned` adds clean aligned original transcript as attribute `aligned` to array-entry
-
-`--output-aligned-raw` adds raw aligned original transcript as attribute `aligned-raw` to array-entry
+- `transcript`: The STT transcript used for aligning
+- `aligned`: The __clean__ original text fragment that got aligned with the audio fragment
+and its STT transcript
+- `aligned-raw`: The __raw__ original text fragment that got aligned with the audio fragment
+and its STT transcript
 
 `--output-tlen` adds length of STT transcript as attribute `tlen` to array-entry
 
