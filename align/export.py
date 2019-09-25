@@ -71,55 +71,63 @@ def main(args):
                         help='Take audio file as input (requires "--aligned <file>")')
     parser.add_argument('--aligned', type=str,
                         help='Take alignment file ("<...>.aligned") as input (requires "--audio <file>")')
+
     parser.add_argument('--catalog', type=str,
                         help='Take alignment and audio file references of provided catalog ("<...>.catalog") as input')
     parser.add_argument('--ignore-missing', action="store_true",
                         help='Ignores catalog entries with missing files')
-    parser.add_argument('--target-dir', type=str, required=True,
-                        help='Existing target directory for storing generated sets (files and directories)')
+
     parser.add_argument('--filter', type=str,
                         help='Python expression that computes a boolean value from sample data fields. '
                              'If the result is True, the sample will be dropped.')
+
     parser.add_argument('--criteria', type=str, default='100',
                         help='Python expression that computes a number as quality indicator from sample data fields.')
-    parser.add_argument('--partition', type=str, action='append',
-                        help='Expression of the form "<number>:<partition>" where all samples with a quality indicator '
-                             '(--criteria) above or equal the given number and below the next bigger one are assigned '
-                             'to the specified partition. Samples below the lowest partition criteria are assigned to '
-                             'partition "other".')
-    parser.add_argument('--split', action="store_true",
-                        help='Split each partition except "other" into train/dev/test sub-sets.')
-    parser.add_argument('--split-field', type=str,
-                        help='Sample meta field that should be used for splitting (e.g. "speaker")')
-    parser.add_argument('--split-seed', type=int,
-                        help='Random seed for set splitting')
+
     parser.add_argument('--debias', type=str, action='append',
                         help='Sample meta field to group samples for debiasing (e.g. "speaker"). '
                              'Group sizes will be capped according to --debias-sigma-factor')
     parser.add_argument('--debias-sigma-factor', type=float, default=3.0,
                         help='Standard deviation (sigma) factor that will determine '
                              'the maximum number of samples per group (see --debias).')
-    parser.add_argument('--loglevel', type=int, default=20,
-                        help='Log level (between 0 and 50) - default: 20')
-    parser.add_argument('--no-progress', action="store_true",
-                        help='Prevents showing progress bars')
+
+    parser.add_argument('--partition', type=str, action='append',
+                        help='Expression of the form "<number>:<partition>" where all samples with a quality indicator '
+                             '(--criteria) above or equal the given number and below the next bigger one are assigned '
+                             'to the specified partition. Samples below the lowest partition criteria are assigned to '
+                             'partition "other".')
+
+    parser.add_argument('--split', action="store_true",
+                        help='Split each partition except "other" into train/dev/test sub-sets.')
+    parser.add_argument('--split-field', type=str,
+                        help='Sample meta field that should be used for splitting (e.g. "speaker")')
+    parser.add_argument('--split-seed', type=int,
+                        help='Random seed for set splitting')
+
+    parser.add_argument('--target-dir', type=str, required=True,
+                        help='Existing target directory for storing generated sets (files and directories)')
+    parser.add_argument('--force', action="store_true",
+                        help='Overwrite existing files')
     parser.add_argument('--format', type=str, default='csv',
                         help='Sample list format - one of (json|csv)')
     parser.add_argument('--rate', type=int,
                         help='Export wav-files with this sample rate')
     parser.add_argument('--channels', type=int,
                         help='Export wav-files with this number of channels')
-    parser.add_argument('--force', action="store_true",
-                        help='Overwrite existing files')
+    parser.add_argument('--pretty', action="store_true",
+                        help='Writes indented JSON output')
+
+    parser.add_argument('--workers', type=int, default=None,
+                        help='Number of workers for loading and re-sampling audio files. Default: Number of CPUs')
     parser.add_argument('--dry-run', action="store_true",
                         help='Simulates export without writing or creating any file or directory')
     parser.add_argument('--dry-run-fast', action="store_true",
                         help='Simulates export without writing or creating any file or directory. '
                              'In contrast to --dry-run this faster simulation will not load samples.')
-    parser.add_argument('--workers', type=int, default=None,
-                        help='Number of workers for loading and re-sampling audio files. Default: Number of CPUs')
-    parser.add_argument('--pretty', action="store_true",
-                        help='Writes indented JSON output')
+    parser.add_argument('--loglevel', type=int, default=20,
+                        help='Log level (between 0 and 50) - default: 20')
+    parser.add_argument('--no-progress', action="store_true",
+                        help='Prevents showing progress bars')
 
     args = parser.parse_args()
 

@@ -352,7 +352,6 @@ def align(triple):
     with open(aligned, 'w') as result_file:
         result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None))
 
-
     return len(result_fragments), len(fragments) - len(result_fragments), reasons
 
 
