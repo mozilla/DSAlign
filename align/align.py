@@ -84,6 +84,7 @@ def init_align(w_args, w_alphabet):
 
 def align(triple):
     tlog, script, aligned = triple
+    return aligned, 0, 0, Counter()
 
     logging.debug("Loading script from %s..." % script)
     tc = read_script(script)
@@ -644,10 +645,9 @@ def main():
     index = 0
     pool = multiprocessing.Pool(initializer=init_align, initargs=(args, alphabet), processes=args.align_workers)
     for aligned_file, file_total_fragments, file_dropped_fragments, file_reasons in \
-            progress(pool.imap_unordered(align, to_align), desc='Aligning', total=len(to_align)):
-        if args.no_progress:
-            index += 1
-            print('Aligned file {} of {} - wrote results to "{}"'.format(index, len(to_align), aligned_file))
+            pool.imap_unordered(align, to_align):
+        index += 1
+        print('Aligned file {} of {} - wrote results to "{}"'.format(index, len(to_align), aligned_file))
         total_fragments += file_total_fragments
         dropped_fragments += file_dropped_fragments
         reasons += file_reasons
