@@ -474,8 +474,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Debug helpers
-    logging.basicConfig(stream=sys.stdout, level=args.loglevel if args.loglevel else 20)
+    logging.basicConfig(stream=sys.stderr, level=args.loglevel)
 
     def progress(iter, **kwargs):
         return iter if args.no_progress else tqdm(iter, **kwargs)
@@ -648,7 +647,7 @@ def main():
             progress(pool.imap_unordered(align, to_align), desc='Aligning', total=len(to_align)):
         if args.no_progress:
             index += 1
-            logging.info('Aligned file {} of {} - wrote results to "{}"'.format(index, len(to_align), aligned_file))
+            print('Aligned file {} of {} - wrote results to "{}"'.format(index, len(to_align), aligned_file))
         total_fragments += file_total_fragments
         dropped_fragments += file_dropped_fragments
         reasons += file_reasons
