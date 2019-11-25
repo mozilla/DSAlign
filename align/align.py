@@ -644,9 +644,8 @@ def main():
 
     index = 0
     pool = multiprocessing.Pool(initializer=init_align, initargs=(args, alphabet), processes=args.align_workers)
-    for aligned_file, file_total_fragments, file_dropped_fragments, file_reasons in progress(pool.imap(align, to_align),
-                                                                               desc='Aligning',
-                                                                               total=len(to_align)):
+    for aligned_file, file_total_fragments, file_dropped_fragments, file_reasons in \
+            progress(pool.imap_unordered(align, to_align), desc='Aligning', total=len(to_align)):
         if args.no_progress:
             index += 1
             logging.info('Aligned file {} of {} - wrote results to "{}"'.format(index, len(to_align), aligned_file))
