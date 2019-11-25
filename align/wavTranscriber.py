@@ -46,7 +46,6 @@ def resolve_models(dir_name):
     :return: tuple containing each of the model files (pb, alphabet, lm and trie)
     """
     pb = glob.glob(dir_name + "/*.pb")[0]
-    alphabet = glob.glob(dir_name + "/alphabet.txt")[0]
     lm = glob.glob(dir_name + "/lm.binary")[0]
     trie = glob.glob(dir_name + "/trie")[0]
-    return pb, alphabet, lm, trie
+    return pb, lm, trie

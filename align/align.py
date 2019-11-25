@@ -386,6 +386,8 @@ def main():
                         help='Start alignment process at given offset of transcribed fragments')
     parser.add_argument('--num-samples', type=int, required=False,
                         help='Number of fragments to align')
+    parser.add_argument('--alphabet', required=False,
+                        help='Path to an alphabet file (overriding the one from --stt-model-dir)')
 
     audio_group = parser.add_argument_group(title='Audio pre-processing options')
     audio_group.add_argument('--audio-vad-aggressiveness', type=int, choices=range(4), required=False,
@@ -393,7 +395,7 @@ def main():
 
     stt_group = parser.add_argument_group(title='STT options')
     stt_group.add_argument('--stt-model-dir', required=False,
-                           help='Path to a directory with output_graph, lm, trie and alphabet files ' +
+                           help='Path to a directory with output_graph, lm, trie and (optional) alphabet file ' +
                                 '(default: "data/en"')
     stt_group.add_argument('--stt-no-own-lm', action="store_true",
                            help='Deactivates creation of individual language models per document.' +
@@ -531,14 +533,22 @@ def main():
     logging.debug('Start')
 
     model_dir = os.path.expanduser(args.stt_model_dir if args.stt_model_dir else 'models/en')
-    logging.debug('Looking for model files in "{}"...'.format(model_dir))
-    output_graph_path, alphabet_path, lang_lm_path, lang_trie_path = wavTranscriber.resolve_models(model_dir)
+
+    if args.alphabet is not None:
+        alphabet_path = args.alphabet
+    else:
+        alphabet_path = os.path.join(model_dir, 'alphabet.txt')
+    if not os.path.isfile(alphabet_path):
+        fail('Found no alphabet file')
     logging.debug('Loading alphabet from "{}"...'.format(alphabet_path))
     alphabet = Alphabet(alphabet_path)
 
     to_align = []
     for audio, tlog, script, aligned in to_prepare:
         if not exists(tlog):
+            if output_graph_path is None:
+                logging.debug('Looking for model files in "{}"...'.format(model_dir))
+                output_graph_path, lang_lm_path, lang_trie_path = wavTranscriber.resolve_models(model_dir)
             kenlm_path = 'dependencies/kenlm/build/bin'
             if not path.exists(kenlm_path):
                 kenlm_path = None
