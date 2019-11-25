@@ -351,8 +351,7 @@ def align(triple):
                                    '=' + str(time_end / 1000.0)])
     with open(aligned, 'w') as result_file:
         result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None))
-
-    return len(result_fragments), len(fragments) - len(result_fragments), reasons
+    return aligned, len(result_fragments), len(fragments) - len(result_fragments), reasons
 
 
 def main():
@@ -643,10 +642,14 @@ def main():
     dropped_fragments = 0
     reasons = Counter()
 
+    index = 0
     pool = multiprocessing.Pool(initializer=init_align, initargs=(args, alphabet), processes=args.align_workers)
-    for file_total_fragments, file_dropped_fragments, file_reasons in progress(pool.imap(align, to_align),
+    for aligned_file, file_total_fragments, file_dropped_fragments, file_reasons in progress(pool.imap(align, to_align),
                                                                                desc='Aligning',
                                                                                total=len(to_align)):
+        if args.no_progress:
+            index += 1
+            logging.info('Aligned file {} of {} - wrote results to "{}"'.format(index, len(to_align), aligned_file))
         total_fragments += file_total_fragments
         dropped_fragments += file_dropped_fragments
         reasons += file_reasons
