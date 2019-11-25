@@ -85,9 +85,6 @@ def init_align(w_args, w_alphabet):
 
 def align(triple):
     tlog, script, aligned = triple
-    time.sleep(1)
-    return aligned, 0, 0, Counter()
-
     logging.debug("Loading script from %s..." % script)
     tc = read_script(script)
     search = FuzzySearch(tc.clean_text,
