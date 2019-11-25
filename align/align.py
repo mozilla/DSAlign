@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 import logging
 import argparse
 import subprocess
@@ -84,6 +85,7 @@ def init_align(w_args, w_alphabet):
 
 def align(triple):
     tlog, script, aligned = triple
+    time.sleep(1)
     return aligned, 0, 0, Counter()
 
     logging.debug("Loading script from %s..." % script)
