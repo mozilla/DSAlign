@@ -475,7 +475,7 @@ def main():
     args = parser.parse_args()
 
     # Debug helpers
-    logging.basicConfig(stream=sys.stderr, level=args.loglevel if args.loglevel else 20)
+    logging.basicConfig(stream=sys.stdout, level=args.loglevel if args.loglevel else 20)
 
     def progress(iter, **kwargs):
         return iter if args.no_progress else tqdm(iter, **kwargs)
