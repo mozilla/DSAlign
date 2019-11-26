@@ -96,10 +96,16 @@ def align(triple):
 
     logging.debug("Loading transcription log from %s..." % tlog)
     with open(tlog, 'r') as transcription_log_file:
-        fragments = json.loads(transcription_log_file.read())
+        fragments = json.load(transcription_log_file)
     end_fragments = (args.start + args.num_samples) if args.num_samples else len(fragments)
     fragments = fragments[args.start:end_fragments]
     for index, fragment in enumerate(fragments):
+        meta = {}
+        for key, value in list(fragment.items()):
+            if key not in ['start', 'end', 'transcript']:
+                meta[key] = value
+                del fragment[key]
+        fragment['meta'] = meta
         fragment['index'] = index
         fragment['transcript'] = fragment['transcript'].strip()
 
@@ -290,17 +296,17 @@ def align(triple):
         original_end = tc.get_original_offset(match_end)
         result_fragment['text-start'] = original_start
         result_fragment['text-end'] = original_end
+
         meta_dict = {}
-        for meta in tc.collect_meta(match_start, match_end):
-            for key in meta.keys():
+        for meta in list(tc.collect_meta(match_start, match_end)) + [fragment['meta']]:
+            for key, value in meta.items():
                 if key == 'text':
                     continue
                 if key in meta_dict:
                     values = meta_dict[key]
                 else:
                     values = meta_dict[key] = []
-                value = meta[key]
-                if not value in values:
+                if value not in values:
                     values.append(value)
         result_fragment['meta'] = meta_dict
 
