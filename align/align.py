@@ -118,7 +118,7 @@ def align(triple):
     def split_match(fragments, start=0, end=-1):
         n = len(fragments)
         if n < 1:
-            raise StopIteration
+            return
         elif n == 1:
             weighted_fragments = [(0, fragments[0])]
         else:
@@ -144,7 +144,7 @@ def align(triple):
                 yield fragment
                 for f in split_match(fragments[index + 1:], start=match_end, end=end):
                     yield f
-                raise StopIteration
+                return
         for _, _ in weighted_fragments:
             yield None
 
