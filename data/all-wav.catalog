@@ -1,0 +1,14 @@
+[
+  {
+    "audio": "test1/audio.wav",
+    "tlog": "test1/joined.tlog",
+    "script": "test1/transcript.txt",
+    "aligned": "test1/aligned.json"
+  },
+  {
+    "audio": "test2/audio.wav",
+    "tlog": "test2/joined.tlog",
+    "script": "test2/transcript.script",
+    "aligned": "test2/aligned.json"
+  }
+]
