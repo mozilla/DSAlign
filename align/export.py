@@ -1,9 +1,11 @@
 import os
+import io
 import sys
 import csv
 import math
 import json
 import random
+import tarfile
 import logging
 import argparse
 import statistics
@@ -104,8 +106,12 @@ def main(args):
     parser.add_argument('--split-seed', type=int,
                         help='Random seed for set splitting')
 
-    parser.add_argument('--target-dir', type=str, required=True,
+    parser.add_argument('--target-dir', type=str, required=False,
                         help='Existing target directory for storing generated sets (files and directories)')
+    parser.add_argument('--target-tar', type=str, required=False,
+                        help='Target tar-file for storing generated sets (files and directories)')
+    parser.add_argument('--buffer', type=int, default=2 << 23,
+                        help='Buffer size for writing files (~16MB by default)')
     parser.add_argument('--force', action="store_true",
                         help='Overwrite existing files')
     parser.add_argument('--format', type=str, default='csv',
@@ -143,8 +149,7 @@ def main(args):
 
     def check_path(target_path, fs_type='file'):
         if not (path.isfile(target_path) if fs_type == 'file' else path.isdir(target_path)):
-            logging.fatal('{} not existing: "{}"'.format(fs_type[0].upper() + fs_type[1:], target_path))
-            exit(1)
+            fail('{} not existing: "{}"'.format(fs_type[0].upper() + fs_type[1:], target_path))
         return path.abspath(target_path)
 
     def make_absolute(base_path, spec_path):
@@ -153,7 +158,23 @@ def main(args):
         spec_path = path.abspath(spec_path)
         return spec_path if path.isfile(spec_path) else None
 
-    target_dir = check_path(args.target_dir, fs_type='directory')
+    target_dir = target_tar = None
+    if args.target_dir is not None and args.target_tar is not None:
+        fail('Only one allowed: --target-dir or --target-tar')
+    elif args.target_dir is not None:
+        target_dir = check_path(args.target_dir, fs_type='directory')
+    elif args.target_tar is not None:
+        target_tar = path.abspath(args.target_tar)
+        if path.isfile(target_tar):
+            if not args.force:
+                fail('Target tar-file already existing - use --force to overwrite')
+        elif path.exists(target_tar):
+            fail('Target tar-file path is existing, but not a file')
+        elif not path.isdir(path.dirname(target_tar)):
+            fail('Unable to write tar-file: Path not existing')
+    else:
+        fail('Either --target-dir or --target-tar has to be provided')
+
     if args.audio:
         if args.aligned:
             pairs.append((check_path(args.audio), check_path(args.aligned)))
@@ -256,15 +277,13 @@ def main(args):
 
     lists = {}
 
-    def ensure_list(name):
-        lists[name] = []
-        if not args.force:
-            for p in [name, name + '.' + args.format]:
-                if path.exists(path.join(target_dir, p)):
-                    fail('"{}" already existing - use --force to ignore'.format(p))
-
     def assign_fragments(frags, name):
-        ensure_list(name)
+        if name not in lists:
+            lists[name] = []
+            if args.target_dir is not None and not args.force:
+                for p in [name, name + '.' + args.format]:
+                    if path.exists(path.join(target_dir, p)):
+                        fail('"{}" already existing - use --force to ignore'.format(p))
         duration = 0
         for f in frags:
             f['list-name'] = name
@@ -316,14 +335,6 @@ def main(args):
             else:
                 assign_fragments(partition_fragments, partition)
 
-    for list_name in lists.keys():
-        dir_name = path.join(target_dir, list_name)
-        if not path.isdir(dir_name):
-            if dry_run:
-                logging.debug('Would create directory "{}"'.format(dir_name))
-            else:
-                os.mkdir(dir_name)
-
     def list_fragments():
         audio_files = engroup(fragments, lambda f: f['audio_path'])
         pool = Pool(args.workers)
@@ -343,51 +354,99 @@ def main(args):
                 else:
                     yield audio, fragment
 
+    created_directories = {}
+    tar = None
+    if target_tar is not None:
+        if dry_run:
+            logging.debug('Would create tar-file "{}"'.format(target_tar))
+        else:
+            base_tar = open(target_tar, 'wb', buffering=args.buffer)
+            tar = tarfile.open(fileobj=base_tar, mode='w')
+
+    class TargetFile:
+        def __init__(self, data_path, mode):
+            self.data_path = data_path
+            self.mode = mode
+            self.open_file = None
+
+        def __enter__(self):
+            parts = self.data_path.split('/')
+            dirs = ([target_dir] if target_dir is not None else []) + parts[:-1]
+            for i in range(1, len(dirs)):
+                vp = '/'.join(dirs[:i + 1])
+                if not vp in created_directories:
+                    if tar is None:
+                        dir_path = path.join(*dirs[:i + 1])
+                        if not path.isdir(dir_path):
+                            if dry_run:
+                                logging.debug('Would create directory "{}"'.format(dir_path))
+                            else:
+                                os.mkdir(dir_path)
+                    else:
+                        tdir = tarfile.TarInfo(vp)
+                        tdir.type = tarfile.DIRTYPE
+                        tar.addfile(tdir)
+                    created_directories[vp] = True
+            if target_tar is None:
+                file_path = path.join(target_dir, *self.data_path.split('/'))
+                if dry_run:
+                    logging.debug('Would write file "{}"'.format(file_path))
+                    self.open_file = io.BytesIO() if 'b' in self.mode else io.StringIO()
+                else:
+                    self.open_file = open(file_path, self.mode)
+            else:
+                self.open_file = io.BytesIO() if 'b' in self.mode else io.StringIO()
+            return self.open_file
+
+        def __exit__(self, *args):
+            if tar is not None:
+                if isinstance(self.open_file, io.StringIO):
+                    sfile = self.open_file
+                    sfile.seek(0)
+                    self.open_file = io.BytesIO(sfile.read().encode('utf8'))
+                    self.open_file.seek(0, 2)
+                    sfile.close()
+                tfile = tarfile.TarInfo(self.data_path)
+                tfile.size = self.open_file.tell()
+                self.open_file.seek(0)
+                tar.addfile(tfile, self.open_file)
+            if self.open_file is not None:
+                self.open_file.close()
+
     for audio_segment, fragment in progress(list_fragments(), desc='Exporting samples', total=len(fragments)):
         list_name = fragment['list-name']
         group_list = lists[list_name]
-        sample_name = 'sample-{:010d}.wav'.format(len(group_list))
-        rel_path = path.join(list_name, sample_name)
-        abs_path = path.join(target_dir, rel_path)
-        if dry_run:
-            logging.debug('Would write file "{}"'.format(abs_path))
-        else:
-            with open(abs_path, "wb") as wav_file:
-                audio_segment.export(wav_file, format="wav")
-                file_size = wav_file.tell()
-            group_list.append((rel_path, file_size, fragment))
+        sample_path = '{}/sample-{:010d}.wav'.format(fragment['list-name'], len(group_list))
+        with TargetFile(sample_path, "wb") as wav_file:
+            audio_segment.export(wav_file, format="wav")
+            file_size = wav_file.tell()
+        group_list.append((sample_path, file_size, fragment))
 
     for list_name, group_list in progress(lists.items(), desc='Writing lists'):
         if args.format == 'json':
-            json_path = path.join(target_dir, list_name + '.json')
-            if dry_run:
-                logging.debug('Would write file "{}"'.format(json_path))
-            else:
-                entries = []
-                for rel_path, file_size, fragment in group_list:
-                    entry = {
-                        'audio': rel_path,
-                        'size': file_size,
-                        'transcript': fragment['aligned'],
-                        'duration': fragment['end'] - fragment['start']
-                    }
-                    if 'aligned-raw' in fragment:
-                        entry['transcript-raw'] = fragment['aligned-raw']
-                    entries.append(entry)
-                with open(json_path, 'w') as json_file:
-                    json.dump(entries, json_file, indent=4 if args.pretty else None)
+            entries = []
+            for rel_path, file_size, fragment in group_list:
+                entry = {
+                    'audio': rel_path,
+                    'size': file_size,
+                    'transcript': fragment['aligned'],
+                    'duration': fragment['end'] - fragment['start']
+                }
+                if 'aligned-raw' in fragment:
+                    entry['transcript-raw'] = fragment['aligned-raw']
+                entries.append(entry)
+            with TargetFile(list_name + '.json', 'w') as json_file:
+                json.dump(entries, json_file, indent=4 if args.pretty else None)
         else:
-            csv_path = path.join(target_dir, list_name + '.csv')
-            if dry_run:
-                logging.debug('Would write file "{}"'.format(csv_path))
-            else:
-                with open(csv_path, 'w') as csv_file:
-                    writer = csv.writer(csv_file)
-                    writer.writerow(['wav_filename', 'wav_filesize', 'transcript'])
-                    for rel_path, file_size, fragment in group_list:
-                        writer.writerow([rel_path, file_size, fragment['aligned']])
+            with TargetFile(list_name + '.csv', 'w') as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(['wav_filename', 'wav_filesize', 'transcript'])
+                for rel_path, file_size, fragment in group_list:
+                    writer.writerow([rel_path, file_size, fragment['aligned']])
+
+    if tar is not None:
+        tar.close()
 
 
 if __name__ == '__main__':
     main(sys.argv[1:])
-    os.system('stty sane')
