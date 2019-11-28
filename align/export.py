@@ -410,6 +410,7 @@ def main(args):
                 tfile.size = self.open_file.tell()
                 self.open_file.seek(0)
                 tar.addfile(tfile, self.open_file)
+                tar.members = []
             if self.open_file is not None:
                 self.open_file.close()
 
