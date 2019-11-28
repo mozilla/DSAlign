@@ -4,6 +4,7 @@ import sys
 import csv
 import math
 import json
+import wave
 import random
 import tarfile
 import logging
@@ -12,11 +13,12 @@ import statistics
 import os.path as path
 
 from tqdm import tqdm
-from pydub import AudioSegment
 from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
+from audio import DEFAULT_FORMAT, ensure_wav_with_format, extract_audio, set_audio_format
 
+audio_format = DEFAULT_FORMAT
 unknown = '<unknown>'
 
 
@@ -55,7 +57,8 @@ def get_sample_size(population_size):
 
 
 def load_segment(audio_path):
-    return audio_path, AudioSegment.from_file(audio_path)
+    result_path, _ = ensure_wav_with_format(audio_path, audio_format)
+    return audio_path, result_path
 
 
 def load_segment_dry(audio_path):
@@ -63,10 +66,11 @@ def load_segment_dry(audio_path):
         logging.debug('Would load file "{}"'.format(audio_path))
     else:
         fail('File not found: "{}"'.format(audio_path))
-    return audio_path, AudioSegment.empty()
+    return audio_path, audio_path
 
 
 def main(args):
+    global audio_format
     parser = argparse.ArgumentParser(description='Export aligned speech samples.')
 
     parser.add_argument('--audio', type=str,
@@ -116,10 +120,12 @@ def main(args):
                         help='Overwrite existing files')
     parser.add_argument('--format', type=str, default='csv',
                         help='Sample list format - one of (json|csv)')
-    parser.add_argument('--rate', type=int,
+    parser.add_argument('--rate', type=int, default=16000,
                         help='Export wav-files with this sample rate')
-    parser.add_argument('--channels', type=int,
+    parser.add_argument('--channels', type=int, default=1,
                         help='Export wav-files with this number of channels')
+    parser.add_argument('--width', type=int, default=2,
+                        help='Export wav-files with this sample width (bytes)')
     parser.add_argument('--pretty', action="store_true",
                         help='Writes indented JSON output')
 
@@ -138,6 +144,7 @@ def main(args):
     args = parser.parse_args()
 
     logging.basicConfig(stream=sys.stderr, level=args.loglevel if args.loglevel else 20)
+    logging.getLogger('sox').setLevel(logging.ERROR)
 
     def progress(iter, desc='Processing', total=None):
         desc = desc.rjust(24)
@@ -205,6 +212,8 @@ def main(args):
 
     dry_run = args.dry_run or args.dry_run_fast
     load_samples = not args.dry_run_fast
+
+    audio_format = (args.rate, args.channels, args.width)
 
     partition_specs = []
     if args.partition is not None:
@@ -339,20 +348,21 @@ def main(args):
         audio_files = engroup(fragments, lambda f: f['audio_path'])
         pool = Pool(args.workers)
         ls = load_segment if load_samples else load_segment_dry
-        for audio_path, audio in pool.imap_unordered(ls, audio_files.keys()):
-            file_fragments = audio_files[audio_path]
-            if args.channels is not None:
-                audio = audio.set_channels(args.channels)
-            if args.rate is not None:
-                audio = audio.set_frame_rate(args.rate)
+        for original_path, converted_path in pool.imap_unordered(ls, audio_files.keys()):
+            file_fragments = audio_files[original_path]
             file_fragments.sort(key=lambda f: f['start'])
-            for fragment in file_fragments:
-                if load_samples:
-                    start, end = fragment['start'], fragment['end']
-                    assert start < end <= len(audio)
-                    yield audio[start:end], fragment
-                else:
-                    yield audio, fragment
+            if load_samples:
+                with wave.open(converted_path, 'rb') as source_wav_file:
+                    duration = source_wav_file.getframerate() * source_wav_file.getnframes() * 1000
+                    for fragment in file_fragments:
+                        start, end = fragment['start'], fragment['end']
+                        assert start < end <= duration
+                        yield extract_audio(source_wav_file, start / 1000.0, end / 1000.0), fragment
+                if original_path != converted_path:
+                    os.unlink(converted_path)
+            else:
+                for fragment in file_fragments:
+                    yield b'', fragment
 
     created_directories = {}
     tar = None
@@ -418,9 +428,11 @@ def main(args):
         list_name = fragment['list-name']
         group_list = lists[list_name]
         sample_path = '{}/sample-{:010d}.wav'.format(fragment['list-name'], len(group_list))
-        with TargetFile(sample_path, "wb") as wav_file:
-            audio_segment.export(wav_file, format="wav")
-            file_size = wav_file.tell()
+        with TargetFile(sample_path, "wb") as base_wav_file:
+            with wave.open(base_wav_file, 'wb') as wav_file:
+                set_audio_format(wav_file)
+                wav_file.writeframes(audio_segment)
+                file_size = wav_file.tell()
         group_list.append((sample_path, file_size, fragment))
 
     for list_name, group_list in progress(lists.items(), desc='Writing lists'):
