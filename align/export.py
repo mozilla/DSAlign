@@ -359,7 +359,7 @@ def main(args):
                         assert start < end <= duration
                         yield extract_audio(source_wav_file, start / 1000.0, end / 1000.0), fragment
                 if original_path != converted_path:
-                    os.unlink(converted_path)
+                    os.remove(converted_path)
             else:
                 for fragment in file_fragments:
                     yield b'', fragment
