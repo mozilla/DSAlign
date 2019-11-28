@@ -129,8 +129,8 @@ def main(args):
     parser.add_argument('--pretty', action="store_true",
                         help='Writes indented JSON output')
 
-    parser.add_argument('--workers', type=int, default=None,
-                        help='Number of workers for loading and re-sampling audio files. Default: Number of CPUs')
+    parser.add_argument('--workers', type=int, default=2,
+                        help='Number of workers for loading and re-sampling audio files. Default: 2')
     parser.add_argument('--dry-run', action="store_true",
                         help='Simulates export without writing or creating any file or directory')
     parser.add_argument('--dry-run-fast', action="store_true",
@@ -359,7 +359,7 @@ def main(args):
                         assert start < end <= duration
                         yield extract_audio(source_wav_file, start / 1000.0, end / 1000.0), fragment
                 if original_path != converted_path:
-                    os.unlink(converted_path)
+                    os.remove(converted_path)
             else:
                 for fragment in file_fragments:
                     yield b'', fragment

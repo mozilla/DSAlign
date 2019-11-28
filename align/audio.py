@@ -32,7 +32,8 @@ def ensure_wav_with_format(src_audio_path, audio_format=DEFAULT_FORMAT):
         with wave.open(src_audio_path, 'r') as src_audio_file:
             if get_audio_format(src_audio_file) == audio_format:
                 return src_audio_path, False
-    _, tmp_file_path = tempfile.mkstemp(suffix='.wav')
+    fd, tmp_file_path = tempfile.mkstemp(suffix='.wav')
+    os.close(fd)
     convert_audio(src_audio_path, tmp_file_path, file_type='wav', audio_format=audio_format)
     return tmp_file_path, True
 
