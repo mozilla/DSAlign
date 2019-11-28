@@ -1,5 +1,7 @@
 import os
+import sys
 import sox
+import time
 import wave
 import tempfile
 
@@ -25,6 +27,14 @@ def convert_audio(src_audio_path, dst_audio_path, file_type=None, audio_format=D
     transformer = sox.Transformer()
     transformer.set_output_format(file_type=file_type, rate=sample_rate, channels=channels, bits=width*8)
     transformer.build(src_audio_path, dst_audio_path)
+    wait_counter = 0
+    while not os.path.exists(dst_audio_path) or not os.path.getsize(dst_audio_path) > 0:
+        print('Waiting for file "{}" getting converted to "{}"...'.format(src_audio_path, dst_audio_path))
+        wait_counter += 1
+        if wait_counter > 10:
+            print('Problem converting "{}" to "{}"! Exiting...'.format(src_audio_path, dst_audio_path))
+            sys.exit(100)
+        time.sleep(1)
 
 
 def ensure_wav_with_format(src_audio_path, audio_format=DEFAULT_FORMAT):
