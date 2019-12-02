@@ -432,7 +432,7 @@ def main(args):
             with wave.open(base_wav_file, 'wb') as wav_file:
                 set_audio_format(wav_file)
                 wav_file.writeframes(audio_segment)
-                file_size = wav_file.tell()
+                file_size = base_wav_file.tell()
         group_list.append((sample_path, file_size, fragment))
 
     for list_name, group_list in progress(lists.items(), desc='Writing lists'):
