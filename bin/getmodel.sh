@@ -12,3 +12,6 @@ fi
 
 tar -xzvf $archive
 mv $dir en
+
+wget "https://raw.githubusercontent.com/mozilla/DeepSpeech/master/data/alphabet.txt"
+mv alphabet.txt en
