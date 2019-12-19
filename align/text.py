@@ -160,7 +160,7 @@ def ngrams(s, size):
     if window < 1 or size < 1:
         if window == 0:
             yield s
-        raise StopIteration
+        return
     for i in range(0, window + 1):
         yield s[i:i + size]
 

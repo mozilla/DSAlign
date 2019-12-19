@@ -20,8 +20,8 @@ def load_model(models, alphabet, lm, trie):
     LM_ALPHA = 1
     LM_BETA = 1.85
 
-    ds = Model(models, N_FEATURES, N_CONTEXT, alphabet, BEAM_WIDTH)
-    ds.enableDecoderWithLM(alphabet, lm, trie, LM_ALPHA, LM_BETA)
+    ds = Model(models, BEAM_WIDTH)
+    ds.enableDecoderWithLM(lm, trie, LM_ALPHA, LM_BETA)
     return ds
 
 
@@ -35,7 +35,7 @@ def stt(ds, audio, fs):
     """
     audio_length = len(audio) * (1 / 16000)
     # Run DeepSpeech
-    output = ds.stt(audio, fs)
+    output = ds.stt(audio)
     return output
 
 
