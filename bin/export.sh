@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-approot="$(dirname "$(dirname "$(readlink -fm "$0")")")"
-source "$approot/venv/bin/activate"
-python "$approot/align/export.py" "$@"
+export APP_ROOT=`python -c "import os, sys; print os.path.dirname(os.path.dirname(os.path.realpath(\"$0\")))"`
+source "$APP_ROOT/venv/bin/activate"
+python "$APP_ROOT/align/export.py" "$@"
 stty sane

@@ -537,7 +537,8 @@ def main():
 
     logging.debug('Start')
 
-    model_dir = os.path.expanduser(args.stt_model_dir if args.stt_model_dir else 'models/en')
+    app_root = os.environ['APP_ROOT'] if 'APP_ROOT' in os.environ else os.curdir
+    model_dir = os.path.expanduser(args.stt_model_dir if args.stt_model_dir else os.path.join(app_root, 'models', 'en'))
 
     if args.alphabet is not None:
         alphabet_path = args.alphabet
@@ -555,13 +556,13 @@ def main():
             if output_graph_path is None:
                 logging.debug('Looking for model files in "{}"...'.format(model_dir))
                 output_graph_path, lang_lm_path, lang_trie_path = wavTranscriber.resolve_models(model_dir)
-            kenlm_path = 'dependencies/kenlm/build/bin'
+            kenlm_path = os.path.join(app_root, 'dependencies', 'kenlm', 'build', 'bin')
             if not path.exists(kenlm_path):
                 kenlm_path = None
-            deepspeech_path = 'dependencies/deepspeech'
+            deepspeech_path = os.path.join(app_root, 'dependencies', 'deepspeech')
             if not path.exists(deepspeech_path):
                 deepspeech_path = None
-            if kenlm_path and deepspeech_path and not args.stt_no_own_lm:
+            if kenlm_path is not None and deepspeech_path is not None and not args.stt_no_own_lm:
                 tc = read_script(script)
                 clean_text_path = script + '.clean'
                 with open(clean_text_path, 'w') as clean_text_file:
@@ -570,7 +571,7 @@ def main():
                 arpa_path = script + '.arpa'
                 if not path.exists(arpa_path):
                     subprocess.check_call([
-                        kenlm_path + '/lmplz',
+                        os.path.join(kenlm_path, 'lmplz'),
                         '--text',
                         clean_text_path,
                         '--arpa',
@@ -582,7 +583,7 @@ def main():
                 lm_path = script + '.lm'
                 if not path.exists(lm_path):
                     subprocess.check_call([
-                        kenlm_path + '/build_binary',
+                        os.path.join(kenlm_path, 'build_binary'),
                         '-s',
                         arpa_path,
                         lm_path
@@ -591,7 +592,7 @@ def main():
                 trie_path = script + '.trie'
                 if not path.exists(trie_path):
                     subprocess.check_call([
-                        deepspeech_path + '/generate_trie',
+                        os.path.join(deepspeech_path, 'generate_trie'),
                         alphabet_path,
                         lm_path,
                         trie_path
