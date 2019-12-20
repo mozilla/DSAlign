@@ -22,4 +22,4 @@ popd
 source $basedir/venv/bin/activate
 mkdir -p deepspeech
 pushd deepspeech
-python $basedir/bin/taskcluster.py --target .
+python $basedir/bin/taskcluster.py --target . --branch v0.6.0
