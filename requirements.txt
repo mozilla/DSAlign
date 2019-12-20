@@ -1,6 +1,6 @@
 six
 sox
-deepspeech
+deepspeech==0.6.0
 webrtcvad
 tqdm
 textdistance

@@ -549,6 +549,7 @@ def main():
     alphabet = Alphabet(alphabet_path)
 
     to_align = []
+    output_graph_path = None
     for audio, tlog, script, aligned in to_prepare:
         if not exists(tlog):
             if output_graph_path is None:
@@ -599,8 +600,8 @@ def main():
                 lm_path = lang_lm_path
                 trie_path = lang_trie_path
 
-            logging.debug('Loading acoustic model from "{}", alphabet from "{}" and language model from "{}"...'
-                          .format(output_graph_path, alphabet_path, lm_path))
+            logging.debug('Loading acoustic model from "{}", alphabet from "{}", trie from "{}" and language model from "{}"...'
+                          .format(output_graph_path, alphabet_path, trie_path, lm_path))
 
             # Run VAD on the input file
             logging.debug('Transcribing VAD segments...')

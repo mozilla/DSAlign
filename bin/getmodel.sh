@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-version="0.5.0"
+version="0.6.0"
 dir="deepspeech-${version}-models"
 archive="${dir}.tar.gz"
 
@@ -12,3 +12,6 @@ fi
 
 tar -xzvf $archive
 mv $dir en
+
+wget "https://raw.githubusercontent.com/mozilla/DeepSpeech/master/data/alphabet.txt"
+mv alphabet.txt en
