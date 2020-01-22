@@ -70,7 +70,7 @@ $ bin/align.sh --help
 ### Alignment using example data
 
 ```bash
-$ bin/align.sh --output-max-cer 15 --loglevel 10 data/test1/audio.wav data/test1/transcript.txt data/test1/aligned.json
+$ bin/align.sh --output-max-cer 15 --loglevel 10 --audio data/test1/audio.wav --script data/test1/transcript.txt --aligned data/test1/aligned.json --tlog data/test1/transcript.log
 ```
 
 ## The algorithm
