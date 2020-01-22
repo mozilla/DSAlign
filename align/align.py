@@ -574,6 +574,7 @@ def main():
                 if not path.exists(arpa_path):
                     subprocess.check_call([
                         kenlm_path + '/lmplz',
+                        '--discount_fallback',
                         '--text',
                         clean_text_path,
                         '--arpa',
