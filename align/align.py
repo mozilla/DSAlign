@@ -563,6 +563,9 @@ def main():
                 deepspeech_path = None
             if kenlm_path and deepspeech_path and not args.stt_no_own_lm:
                 tc = read_script(script)
+                if not tc.clean_text.strip():
+                    logging.error('Cleaned transcript is empty for {}'.format(path.basename(script)))
+                    continue
                 clean_text_path = script + '.clean'
                 with open(clean_text_path, 'w') as clean_text_file:
                     clean_text_file.write(tc.clean_text)
