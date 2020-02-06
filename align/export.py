@@ -16,7 +16,7 @@ from tqdm import tqdm
 from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
-from audio import DEFAULT_FORMAT, ensure_wav_with_format, extract_audio, set_audio_format
+from audio import DEFAULT_FORMAT, ensure_wav_with_format, extract_audio, write_audio_format_to_wav_file
 
 audio_format = DEFAULT_FORMAT
 unknown = '<unknown>'
@@ -430,7 +430,7 @@ def main(args):
         sample_path = '{}/sample-{:010d}.wav'.format(fragment['list-name'], len(group_list))
         with TargetFile(sample_path, "wb") as base_wav_file:
             with wave.open(base_wav_file, 'wb') as wav_file:
-                set_audio_format(wav_file)
+                write_audio_format_to_wav_file(wav_file)
                 wav_file.writeframes(audio_segment)
                 file_size = base_wav_file.tell()
         group_list.append((sample_path, file_size, fragment))

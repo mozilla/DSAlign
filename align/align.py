@@ -3,39 +3,39 @@ import sys
 import json
 import logging
 import argparse
+import deepspeech
 import subprocess
 import os.path as path
 import numpy as np
 import textdistance
-import wavSplit
-import wavTranscriber
 import multiprocessing
 from collections import Counter
 from search import FuzzySearch
+from glob import glob
 from tqdm import tqdm
 from text import Alphabet, TextCleaner, levenshtein, similarity
 from utils import enweight
+from audio import DEFAULT_RATE, read_frames_from_file, vad_split
 
-algos = ['WNG', 'jaro_winkler', 'editex', 'levenshtein', 'mra', 'hamming']
-sim_desc = 'From 0.0 (not equal at all) to 100.0 (totally equal)'
-named_numbers = {
+BEAM_WIDTH = 500
+LM_ALPHA = 1
+LM_BETA = 1.85
+
+ALGORITHMS = ['WNG', 'jaro_winkler', 'editex', 'levenshtein', 'mra', 'hamming']
+SIM_DESC = 'From 0.0 (not equal at all) to 100.0 (totally equal)'
+NAMED_NUMBERS = {
     'tlen': ('transcript length', int, None),
     'mlen': ('match length', int, None),
     'SWS': ('Smith-Waterman score', float, 'From 0.0 (not equal at all) to 100.0+ (pretty equal)'),
-    'WNG': ('weighted N-gram similarity', float, sim_desc),
-    'jaro_winkler': ('Jaro-Winkler similarity', float, sim_desc),
-    'editex': ('Editex similarity', float, sim_desc),
-    'levenshtein': ('Levenshtein similarity', float, sim_desc),
-    'mra': ('MRA similarity', float, sim_desc),
-    'hamming': ('Hamming similarity', float, sim_desc),
+    'WNG': ('weighted N-gram similarity', float, SIM_DESC),
+    'jaro_winkler': ('Jaro-Winkler similarity', float, SIM_DESC),
+    'editex': ('Editex similarity', float, SIM_DESC),
+    'levenshtein': ('Levenshtein similarity', float, SIM_DESC),
+    'mra': ('MRA similarity', float, SIM_DESC),
+    'hamming': ('Hamming similarity', float, SIM_DESC),
     'CER': ('character error rate', float, 'From 0.0 (no different words) to 100.0+ (total miss)'),
     'WER': ('word error rate', float, 'From 0.0 (no wrong characters) to 100.0+ (total miss)')
 }
-
-args = None
-model = None
-sample_rate = 0
-alphabet = None
 
 
 def fail(message, code=1):
@@ -61,25 +61,21 @@ def read_script(script_path):
     return tc
 
 
-def init_stt(output_graph_path, alphabet_path, lm_path, trie_path, rate):
-    global model, sample_rate
-    sample_rate = rate
+model = None
+
+def init_stt(output_graph_path, lm_path, trie_path):
+    global model
+    model = deepspeech.Model(output_graph_path, BEAM_WIDTH)
+    model.enableDecoderWithLM(lm_path, trie_path, LM_ALPHA, LM_BETA)
     logging.debug('Process {}: Loaded models'.format(os.getpid()))
-    model = wavTranscriber.load_model(output_graph_path, alphabet_path, lm_path, trie_path)
 
 
 def stt(sample):
     time_start, time_end, audio = sample
     logging.debug('Process {}: Transcribing...'.format(os.getpid()))
-    transcript = wavTranscriber.stt(model, audio, sample_rate)
+    transcript = model.stt(audio)
     logging.debug('Process {}: {}'.format(os.getpid(), transcript))
     return time_start, time_end, ' '.join(transcript.split())
-
-
-def init_align(w_args, w_alphabet):
-    global args, alphabet
-    args = w_args
-    alphabet = w_alphabet
 
 
 def align(triple):
@@ -166,7 +162,7 @@ def align(triple):
                 max_ngram_size=args.align_wng_max_size,
                 size_factor=args.align_wng_size_factor,
                 position_factor=args.align_wng_position_factor)
-        elif algo in algos:
+        elif algo in ALGORITHMS:
             algo_impl = similarity_algos[algo] = getattr(textdistance, algo).normalized_similarity
         else:
             logging.fatal('Unknown similarity metric "{}"'.format(algo))
@@ -257,7 +253,7 @@ def align(triple):
                 show.insert(0, '{}: {:.2f}'.format(number_key, val))
                 if should_output:
                     fragment[kl] = val
-            reason_base = '{} ({})'.format(named_numbers[number_key][0], number_key)
+            reason_base = '{} ({})'.format(NAMED_NUMBERS[number_key][0], number_key)
             reason = None
             if min_val and val < min_val:
                 reason = reason_base + ' too low'
@@ -321,7 +317,7 @@ def align(triple):
             continue
 
         should_skip = False
-        for algo in algos:
+        for algo in ALGORITHMS:
             should_skip = should_skip or apply_number(algo, index, result_fragment, sample_numbers,
                                                       lambda: 100 * phrase_similarity(algo,
                                                                                       fragment_matched,
@@ -361,7 +357,194 @@ def align(triple):
 
 
 def main():
-    global args, alphabet
+    # Debug helpers
+    logging.basicConfig(stream=sys.stdout, level=args.loglevel if args.loglevel else 20)
+
+    def progress(iter, **kwargs):
+        return iter if args.no_progress else tqdm(iter, **kwargs)
+
+    def resolve(base_path, spec_path):
+        if spec_path is None:
+            return None
+        if not path.isabs(spec_path):
+            spec_path = path.join(base_path, spec_path)
+        return spec_path
+
+    def exists(file_path):
+        if file_path is None:
+            return False
+        return os.path.isfile(file_path)
+
+    to_prepare = []
+
+    def enqueue_or_fail(audio, tlog, script, aligned, prefix=''):
+        if exists(aligned) and not args.force:
+            fail(prefix + 'Alignment file "{}" already existing - use --force to overwrite'.format(aligned))
+        if tlog is None:
+            if args.ignore_missing:
+                return
+            fail(prefix + 'Missing transcription log path')
+        if not exists(audio) and not exists(tlog):
+            if args.ignore_missing:
+                return
+            fail(prefix + 'Both audio file "{}" and transcription log "{}" are missing'.format(audio, tlog))
+        if not exists(script):
+            if args.ignore_missing:
+                return
+            fail(prefix + 'Missing script "{}"'.format(script))
+        to_prepare.append((audio, tlog, script, aligned))
+
+    if (args.audio or args.tlog) and args.script and args.aligned and not args.catalog:
+        enqueue_or_fail(args.audio, args.tlog, args.script, args.aligned)
+    elif args.catalog:
+        if not exists(args.catalog):
+            fail('Unable to load catalog file "{}"'.format(args.catalog))
+        catalog = path.abspath(args.catalog)
+        catalog_dir = path.dirname(catalog)
+        with open(catalog, 'r') as catalog_file:
+            catalog_entries = json.load(catalog_file)
+        for entry in progress(catalog_entries, desc='Reading catalog'):
+            enqueue_or_fail(resolve(catalog_dir, entry['audio']),
+                            resolve(catalog_dir, entry['tlog']),
+                            resolve(catalog_dir, entry['script']),
+                            resolve(catalog_dir, entry['aligned']),
+                            prefix='Problem loading catalog "{}" - '.format(catalog))
+    else:
+        fail('You have to either specify a combination of "--audio/--tlog,--script,--aligned" or "--catalog"')
+
+    logging.debug('Start')
+
+    to_align = []
+    output_graph_path = None
+    for audio_path, tlog_path, script_path, aligned_path in to_prepare:
+        if not exists(tlog_path):
+            if output_graph_path is None:
+                logging.debug('Looking for model files in "{}"...'.format(model_dir))
+                output_graph_path = glob(model_dir + "/output_graph.pb")[0]
+                lang_lm_path = glob(model_dir + "/lm.binary")[0]
+                lang_trie_path = glob(model_dir + "/trie")[0]
+            kenlm_path = 'dependencies/kenlm/build/bin'
+            if not path.exists(kenlm_path):
+                kenlm_path = None
+            deepspeech_path = 'dependencies/deepspeech'
+            if not path.exists(deepspeech_path):
+                deepspeech_path = None
+            if kenlm_path and deepspeech_path and not args.stt_no_own_lm:
+                tc = read_script(script_path)
+                if not tc.clean_text.strip():
+                    logging.error('Cleaned transcript is empty for {}'.format(path.basename(script_path)))
+                    continue
+                clean_text_path = script_path + '.clean'
+                with open(clean_text_path, 'w') as clean_text_file:
+                    clean_text_file.write(tc.clean_text)
+
+                arpa_path = script_path + '.arpa'
+                if not path.exists(arpa_path):
+                    subprocess.check_call([
+                        kenlm_path + '/lmplz',
+                        '--discount_fallback',
+                        '--text',
+                        clean_text_path,
+                        '--arpa',
+                        arpa_path,
+                        '--o',
+                        '5'
+                    ])
+
+                lm_path = script_path + '.lm'
+                if not path.exists(lm_path):
+                    subprocess.check_call([
+                        kenlm_path + '/build_binary',
+                        '-s',
+                        arpa_path,
+                        lm_path
+                    ])
+
+                trie_path = script_path + '.trie'
+                if not path.exists(trie_path):
+                    subprocess.check_call([
+                        deepspeech_path + '/generate_trie',
+                        alphabet_path,
+                        lm_path,
+                        trie_path
+                    ])
+            else:
+                lm_path = lang_lm_path
+                trie_path = lang_trie_path
+
+            logging.debug('Loading acoustic model from "{}", alphabet from "{}", trie from "{}" and language model from "{}"...'
+                          .format(output_graph_path, alphabet_path, trie_path, lm_path))
+
+            # Run VAD on the input file
+            logging.debug('Transcribing VAD segments...')
+            frames = read_frames_from_file(audio_path, model_format, args.audio_vad_frame_length)
+            segments = vad_split(frames,
+                                 model_format,
+                                 num_padding_frames=args.audio_vad_padding,
+                                 threshold=args.audio_vad_threshold,
+                                 aggressiveness=args.audio_vad_aggressiveness)
+
+            def pre_filter():
+                for i, segment in enumerate(segments):
+                    segment_buffer, time_start, time_end = segment
+                    time_length = time_end - time_start
+                    if args.stt_min_duration and time_length < args.stt_min_duration:
+                        logging.info('Fragment {}: Audio too short for STT'.format(i))
+                        continue
+                    if args.stt_max_duration and time_length > args.stt_max_duration:
+                        logging.info('Fragment {}: Audio too long for STT'.format(i))
+                        continue
+                    yield (time_start, time_end, np.frombuffer(segment_buffer, dtype=np.int16))
+
+            samples = list(progress(pre_filter(), desc='VAD splitting'))
+
+            pool = multiprocessing.Pool(initializer=init_stt,
+                                        initargs=(output_graph_path, lm_path, trie_path),
+                                        processes=args.stt_workers)
+            transcripts = progress(pool.imap(stt, samples), desc='Transcribing', total=len(samples))
+
+            fragments = []
+            for time_start, time_end, segment_transcript in transcripts:
+                if segment_transcript is None:
+                    continue
+                fragments.append({
+                    'start': time_start,
+                    'end': time_end,
+                    'transcript': segment_transcript
+                })
+            logging.debug('Excluded {} empty transcripts'.format(len(transcripts) - len(fragments)))
+
+            logging.debug('Writing transcription log to file "{}"...'.format(tlog_path))
+            with open(tlog_path, 'w') as tlog_file:
+                tlog_file.write(json.dumps(fragments, indent=4 if args.output_pretty else None))
+        if not path.isfile(tlog_path):
+            fail('Problem loading transcript from "{}"'.format(tlog_path))
+        to_align.append((tlog_path, script_path, aligned_path))
+
+    total_fragments = 0
+    dropped_fragments = 0
+    reasons = Counter()
+
+    index = 0
+    pool = multiprocessing.Pool(processes=args.align_workers)
+    for aligned_file, file_total_fragments, file_dropped_fragments, file_reasons in \
+            progress(pool.imap_unordered(align, to_align), desc='Aligning', total=len(to_align)):
+        if args.no_progress:
+            index += 1
+            logging.info('Aligned file {} of {} - wrote results to "{}"'.format(index, len(to_align), aligned_file))
+        total_fragments += file_total_fragments
+        dropped_fragments += file_dropped_fragments
+        reasons += file_reasons
+
+    logging.info('Aligned {} fragments'.format(total_fragments))
+    if total_fragments > 0 and dropped_fragments > 0:
+        logging.info('Dropped {} fragments {:0.2f}%:'.format(dropped_fragments,
+                                                             dropped_fragments * 100.0 / total_fragments))
+        for key, number in reasons.most_common():
+            logging.info(' - {}: {}'.format(key, number))
+
+
+def parse_args():
     parser = argparse.ArgumentParser(description='Force align speech data with a transcript.')
 
     parser.add_argument('--audio', type=str,
@@ -395,10 +578,20 @@ def main():
                         help='Path to an alphabet file (overriding the one from --stt-model-dir)')
 
     audio_group = parser.add_argument_group(title='Audio pre-processing options')
-    audio_group.add_argument('--audio-vad-aggressiveness', type=int, choices=range(4), required=False,
-                             help='Determines how aggressive filtering out non-speech is (default: 3)')
+    audio_group.add_argument('--audio-vad-aggressiveness', type=int, choices=range(4), default=3,
+                             help='Aggressiveness of voice activity detection in a frame (default: 3)')
+    audio_group.add_argument('--audio-vad-padding', type=int, default=10,
+                             help='Number of padding audio frames in VAD ring-buffer')
+    audio_group.add_argument('--audio-vad-threshold', type=float, default=0.5,
+                             help='VAD ring-buffer threshold for voiced frames '
+                                  '(e.g. 0.5 -> 50% of the ring-buffer frames have to be voiced '
+                                  'for triggering a split)')
+    audio_group.add_argument('--audio-vad-frame-length', choices=[10, 20, 30], default=30,
+                             help='VAD audio frame length in ms (10, 20 or 30)')
 
     stt_group = parser.add_argument_group(title='STT options')
+    stt_group.add_argument('--stt-model-rate', type=int, default=DEFAULT_RATE,
+                           help='Supported sample rate of the acoustic model')
     stt_group.add_argument('--stt-model-dir', required=False,
                            help='Path to a directory with output_graph, lm, trie and (optional) alphabet file ' +
                                 '(default: "data/en"')
@@ -467,8 +660,8 @@ def main():
     output_group.add_argument('--output-pretty', action="store_true",
                               help='Writes indented JSON output"')
 
-    for short in named_numbers.keys():
-        long, atype, desc = named_numbers[short]
+    for short in NAMED_NUMBERS.keys():
+        long, atype, desc = NAMED_NUMBERS[short]
         desc = (' - value range: ' + desc) if desc else ''
         output_group.add_argument('--output-' + short.lower(), action="store_true",
                                   help='Writes {} ({}) to output'.format(long, short))
@@ -476,69 +669,14 @@ def main():
             output_group.add_argument('--output-' + extreme.lower() + '-' + short.lower(), type=atype, required=False,
                                       help='{}imum {} ({}) the STT transcript of the audio '
                                            'has to have when compared with the original text{}'
-                                           .format(extreme, long, short, desc))
+                                      .format(extreme, long, short, desc))
 
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    # Debug helpers
-    logging.basicConfig(stream=sys.stdout, level=args.loglevel if args.loglevel else 20)
 
-    def progress(iter, **kwargs):
-        return iter if args.no_progress else tqdm(iter, **kwargs)
-
-    def resolve(base_path, spec_path):
-        if spec_path is None:
-            return None
-        if not path.isabs(spec_path):
-            spec_path = path.join(base_path, spec_path)
-        return spec_path
-
-    def exists(file_path):
-        if file_path is None:
-            return False
-        return os.path.isfile(file_path)
-
-    to_prepare = []
-
-    def enqueue_or_fail(audio, tlog, script, aligned, prefix=''):
-        if exists(aligned) and not args.force:
-            fail(prefix + 'Alignment file "{}" already existing - use --force to overwrite'.format(aligned))
-        if tlog is None:
-            if args.ignore_missing:
-                return
-            fail(prefix + 'Missing transcription log path')
-        if not exists(audio) and not exists(tlog):
-            if args.ignore_missing:
-                return
-            fail(prefix + 'Both audio file "{}" and transcription log "{}" are missing'.format(audio, tlog))
-        if not exists(script):
-            if args.ignore_missing:
-                return
-            fail(prefix + 'Missing script "{}"'.format(script))
-        to_prepare.append((audio, tlog, script, aligned))
-
-    if (args.audio or args.tlog) and args.script and args.aligned and not args.catalog:
-        enqueue_or_fail(args.audio, args.tlog, args.script, args.aligned)
-    elif args.catalog:
-        if not exists(args.catalog):
-            fail('Unable to load catalog file "{}"'.format(args.catalog))
-        catalog = path.abspath(args.catalog)
-        catalog_dir = path.dirname(catalog)
-        with open(catalog, 'r') as catalog_file:
-            catalog_entries = json.load(catalog_file)
-        for entry in progress(catalog_entries, desc='Reading catalog'):
-            enqueue_or_fail(resolve(catalog_dir, entry['audio']),
-                            resolve(catalog_dir, entry['tlog']),
-                            resolve(catalog_dir, entry['script']),
-                            resolve(catalog_dir, entry['aligned']),
-                            prefix='Problem loading catalog "{}" - '.format(catalog))
-    else:
-        fail('You have to either specify a combination of "--audio/--tlog,--script,--aligned" or "--catalog"')
-
-    logging.debug('Start')
-
+if __name__ == '__main__':
+    args = parse_args()
     model_dir = os.path.expanduser(args.stt_model_dir if args.stt_model_dir else 'models/en')
-
     if args.alphabet is not None:
         alphabet_path = args.alphabet
     else:
@@ -547,130 +685,5 @@ def main():
         fail('Found no alphabet file')
     logging.debug('Loading alphabet from "{}"...'.format(alphabet_path))
     alphabet = Alphabet(alphabet_path)
-
-    to_align = []
-    output_graph_path = None
-    for audio, tlog, script, aligned in to_prepare:
-        if not exists(tlog):
-            if output_graph_path is None:
-                logging.debug('Looking for model files in "{}"...'.format(model_dir))
-                output_graph_path, lang_lm_path, lang_trie_path = wavTranscriber.resolve_models(model_dir)
-            kenlm_path = 'dependencies/kenlm/build/bin'
-            if not path.exists(kenlm_path):
-                kenlm_path = None
-            deepspeech_path = 'dependencies/deepspeech'
-            if not path.exists(deepspeech_path):
-                deepspeech_path = None
-            if kenlm_path and deepspeech_path and not args.stt_no_own_lm:
-                tc = read_script(script)
-                if not tc.clean_text.strip():
-                    logging.error('Cleaned transcript is empty for {}'.format(path.basename(script)))
-                    continue
-                clean_text_path = script + '.clean'
-                with open(clean_text_path, 'w') as clean_text_file:
-                    clean_text_file.write(tc.clean_text)
-
-                arpa_path = script + '.arpa'
-                if not path.exists(arpa_path):
-                    subprocess.check_call([
-                        kenlm_path + '/lmplz',
-                        '--discount_fallback',
-                        '--text',
-                        clean_text_path,
-                        '--arpa',
-                        arpa_path,
-                        '--o',
-                        '5'
-                    ])
-
-                lm_path = script + '.lm'
-                if not path.exists(lm_path):
-                    subprocess.check_call([
-                        kenlm_path + '/build_binary',
-                        '-s',
-                        arpa_path,
-                        lm_path
-                    ])
-
-                trie_path = script + '.trie'
-                if not path.exists(trie_path):
-                    subprocess.check_call([
-                        deepspeech_path + '/generate_trie',
-                        alphabet_path,
-                        lm_path,
-                        trie_path
-                    ])
-            else:
-                lm_path = lang_lm_path
-                trie_path = lang_trie_path
-
-            logging.debug('Loading acoustic model from "{}", alphabet from "{}", trie from "{}" and language model from "{}"...'
-                          .format(output_graph_path, alphabet_path, trie_path, lm_path))
-
-            # Run VAD on the input file
-            logging.debug('Transcribing VAD segments...')
-            aggressiveness = int(args.audio_vad_aggressiveness) if args.audio_vad_aggressiveness else 3
-            segments, rate, audio_length = wavSplit.vad_segment_generator(audio, aggressiveness)
-
-            def pre_filter():
-                for i, segment in enumerate(segments):
-                    segment_buffer, time_start, time_end = segment
-                    time_length = time_end - time_start
-                    if args.stt_min_duration and time_length < args.stt_min_duration:
-                        logging.info('Fragment {}: Audio too short for STT'.format(i))
-                        continue
-                    if args.stt_max_duration and time_length > args.stt_max_duration:
-                        logging.info('Fragment {}: Audio too long for STT'.format(i))
-                        continue
-                    yield (time_start, time_end, np.frombuffer(segment_buffer, dtype=np.int16))
-
-            samples = list(progress(pre_filter(), desc='VAD splitting'))
-
-            pool = multiprocessing.Pool(initializer=init_stt,
-                                        initargs=(output_graph_path, alphabet_path, lm_path, trie_path, rate),
-                                        processes=args.stt_workers)
-            transcripts = progress(pool.imap(stt, samples), desc='Transcribing', total=len(samples))
-
-            fragments = []
-            for time_start, time_end, segment_transcript in transcripts:
-                if segment_transcript is None:
-                    continue
-                fragments.append({
-                    'start': time_start,
-                    'end': time_end,
-                    'transcript': segment_transcript
-                })
-            logging.debug('Excluded {} empty transcripts'.format(len(transcripts) - len(fragments)))
-
-            logging.debug('Writing transcription log to file "{}"...'.format(tlog))
-            with open(tlog, 'w') as tlog_file:
-                tlog_file.write(json.dumps(fragments, indent=4 if args.output_pretty else None))
-        if not path.isfile(tlog):
-            fail('Problem loading transcript from "{}"'.format(tlog))
-        to_align.append((tlog, script, aligned))
-
-    total_fragments = 0
-    dropped_fragments = 0
-    reasons = Counter()
-
-    index = 0
-    pool = multiprocessing.Pool(initializer=init_align, initargs=(args, alphabet), processes=args.align_workers)
-    for aligned_file, file_total_fragments, file_dropped_fragments, file_reasons in \
-            progress(pool.imap_unordered(align, to_align), desc='Aligning', total=len(to_align)):
-        if args.no_progress:
-            index += 1
-            logging.info('Aligned file {} of {} - wrote results to "{}"'.format(index, len(to_align), aligned_file))
-        total_fragments += file_total_fragments
-        dropped_fragments += file_dropped_fragments
-        reasons += file_reasons
-
-    logging.info('Aligned {} fragments'.format(total_fragments))
-    if total_fragments > 0 and dropped_fragments > 0:
-        logging.info('Dropped {} fragments {:0.2f}%:'.format(dropped_fragments,
-                                                             dropped_fragments * 100.0 / total_fragments))
-        for key, number in reasons.most_common():
-            logging.info(' - {}: {}'.format(key, number))
-
-
-if __name__ == '__main__':
+    model_format = (args.stt_model_rate, 1, 2)
     main()

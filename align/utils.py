@@ -1,3 +1,6 @@
+
+from multiprocessing.dummy import Pool as ThreadPool
+
 def circulate(items, center=None):
     count = len(list(items))
     if count > 0:
@@ -57,3 +60,30 @@ def greedy_minimum_search(a, b, compute, result_a=None, result_b=None):
         return greedy_minimum_search(a, c, compute, result_a=result_a)
     else:
         return greedy_minimum_search(c, b, compute, result_b=result_b)
+
+
+class LimitingPool:
+    def __init__(self, processes=None, limit_factor=2, sleeping_for=0.1):
+        self.processes = os.cpu_count() if processes is None else processes
+        self.pool = ThreadPool(processes=processes)
+        self.sleeping_for = sleeping_for
+        self.max_ahead = self.processes * limit_factor
+        self.processed = 0
+
+    def __enter__(self):
+        return self
+
+    def limit(self, it):
+        for obj in it:
+            while self.processed >= self.max_ahead:
+                time.sleep(self.sleeping_for)
+            self.processed += 1
+            yield obj
+
+    def map(self, fun, it):
+        for obj in self.pool.imap(fun, self.limit(it)):
+            self.processed -= 1
+            yield obj
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.pool.close()
