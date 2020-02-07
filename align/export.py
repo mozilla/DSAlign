@@ -16,7 +16,10 @@ from tqdm import tqdm
 from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
-from audio import DEFAULT_FORMAT, ensure_wav_with_format, extract_audio, write_audio_format_to_wav_file
+from audio import DEFAULT_FORMAT, AUDIO_TYPE_PCM, AUDIO_TYPE_OPUS,\
+    ensure_wav_with_format, extract_audio, convert_samples, write_audio_format_to_wav_file
+from sdb import SortingSDBWriter, CollectionSample
+from utils import MEGABYTE, parse_file_size
 
 audio_format = DEFAULT_FORMAT
 unknown = '<unknown>'
@@ -114,7 +117,13 @@ def main(args):
                         help='Existing target directory for storing generated sets (files and directories)')
     parser.add_argument('--target-tar', type=str, required=False,
                         help='Target tar-file for storing generated sets (files and directories)')
-    parser.add_argument('--buffer', type=int, default=2 << 23,
+    parser.add_argument('--sdb', action="store_true",
+                        help='Writes Sample DBs instead of CSV and .wav files (requires --target-dir)')
+    parser.add_argument('--sdb-bucket-size', default='1GB',
+                        help='Memory bucket size for external sorting of SDBs')
+    parser.add_argument('--sdb-worker-factor', type=float, default=1.0,
+                        help='CPU core factor for the number of Opus encoding workers (0 -> 1 worker)')
+    parser.add_argument('--buffer', default='1MB',
                         help='Buffer size for writing files (~16MB by default)')
     parser.add_argument('--force', action="store_true",
                         help='Overwrite existing files')
@@ -142,6 +151,9 @@ def main(args):
                         help='Prevents showing progress bars')
 
     args = parser.parse_args()
+
+    args.buffer = parse_file_size(args.buffer)
+    args.sdb_bucket_size = parse_file_size(args.sdb_bucket_size)
 
     logging.basicConfig(stream=sys.stderr, level=args.loglevel if args.loglevel else 20)
     logging.getLogger('sox').setLevel(logging.ERROR)
@@ -171,6 +183,8 @@ def main(args):
     elif args.target_dir is not None:
         target_dir = check_path(args.target_dir, fs_type='directory')
     elif args.target_tar is not None:
+        if args.sdb:
+            fail('Option --sdb not supported for --target-tar output. Use --target-dir instead.')
         target_tar = path.abspath(args.target_tar)
         if path.isfile(target_tar):
             if not args.force:
@@ -363,6 +377,25 @@ def main(args):
             else:
                 for fragment in file_fragments:
                     yield b'', fragment
+
+    if args.sdb:
+        for list_name in lists.keys():
+            sdb_path = os.path.join(target_dir, list_name + '.sdb')
+            lists[list_name] = SortingSDBWriter(sdb_path, buffering=args.buffer, cache_size=args.sdb_bucket_size)
+
+        def to_samples():
+            for s, f in list_fragments():
+                yield CollectionSample(f['list-name'], AUDIO_TYPE_PCM, s, f['aligned'], audio_format=audio_format)
+
+        sdb_processes = max(1, int(args.sdb_worker_factor * os.cpu_count()))
+        for sample in progress(convert_samples(to_samples(), audio_type=AUDIO_TYPE_OPUS, processes=sdb_processes),
+                               desc='Exporting samples', total=len(fragments)):
+            list_name = sample.sample_id
+            sdb = lists[list_name]
+            sdb.add(sample)
+        for sdb in lists.values():
+            sdb.close()
+        return
 
     created_directories = {}
     tar = None

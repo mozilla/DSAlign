@@ -5,3 +5,4 @@ webrtcvad
 tqdm
 textdistance
 pydub
+opuslib

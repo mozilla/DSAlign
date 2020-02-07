@@ -1,5 +1,30 @@
 
+import os
+import time
 from multiprocessing.dummy import Pool as ThreadPool
+
+KILO = 1024
+KILOBYTE = 1 * KILO
+MEGABYTE = KILO * KILOBYTE
+GIGABYTE = KILO * MEGABYTE
+TERABYTE = KILO * GIGABYTE
+SIZE_PREFIX_LOOKUP = {'k': KILOBYTE, 'm': MEGABYTE, 'g': GIGABYTE, 't': TERABYTE}
+
+
+def parse_file_size(file_size):
+    file_size = file_size.lower().strip()
+    if len(file_size) == 0:
+        return 0
+    n = int(keep_only_digits(file_size))
+    if file_size[-1] == 'b':
+        file_size = file_size[:-1]
+    e = file_size[-1]
+    return SIZE_PREFIX_LOOKUP[e] * n if e in SIZE_PREFIX_LOOKUP else n
+
+
+def keep_only_digits(txt):
+    return ''.join(filter(str.isdigit, txt))
+
 
 def circulate(items, center=None):
     count = len(list(items))
