@@ -253,6 +253,8 @@ def write_opus(opus_file, audio_format, audio_data):
     opus_file.write(pack_number(width, OPUS_WIDTH_SIZE))
     for i in range(0, len(audio_data), chunk_size):
         chunk = audio_data[i:i + chunk_size]
+        if len(chunk) < chunk_size:
+            chunk = chunk + bytearray(chunk_size - len(chunk))
         encoded = encoder.encode(chunk, frame_size)
         opus_file.write(pack_number(len(encoded), OPUS_CHUNK_LEN_SIZE))
         opus_file.write(encoded)
