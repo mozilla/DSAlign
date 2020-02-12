@@ -17,8 +17,8 @@ from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
 from audio import DEFAULT_FORMAT, AUDIO_TYPE_PCM, AUDIO_TYPE_OPUS,\
-    ensure_wav_with_format, extract_audio, convert_samples, write_audio_format_to_wav_file
-from sdb import SortingSDBWriter, CollectionSample
+    ensure_wav_with_format, extract_audio, change_audio_types, write_audio_format_to_wav_file
+from sample_collections import SortingSDBWriter, CollectionSample
 from utils import MEGABYTE, parse_file_size
 
 audio_format = DEFAULT_FORMAT
@@ -121,8 +121,8 @@ def main(args):
                         help='Writes Sample DBs instead of CSV and .wav files (requires --target-dir)')
     parser.add_argument('--sdb-bucket-size', default='1GB',
                         help='Memory bucket size for external sorting of SDBs')
-    parser.add_argument('--sdb-worker-factor', type=float, default=1.0,
-                        help='CPU core factor for the number of Opus encoding workers (0 -> 1 worker)')
+    parser.add_argument('--sdb-workers', type=int, default=None,
+                        help='Number of SDB encoding workers')
     parser.add_argument('--buffer', default='1MB',
                         help='Buffer size for writing files (~16MB by default)')
     parser.add_argument('--force', action="store_true",
@@ -387,8 +387,7 @@ def main(args):
             for s, f in list_fragments():
                 yield CollectionSample(f['list-name'], AUDIO_TYPE_PCM, s, f['aligned'], audio_format=audio_format)
 
-        sdb_processes = max(1, int(args.sdb_worker_factor * os.cpu_count()))
-        for sample in progress(convert_samples(to_samples(), audio_type=AUDIO_TYPE_OPUS, processes=sdb_processes),
+        for sample in progress(change_audio_types(to_samples(), audio_type=AUDIO_TYPE_OPUS, processes=args.sdb_workers),
                                desc='Exporting samples', total=len(fragments)):
             list_name = sample.sample_id
             sdb = lists[list_name]

@@ -87,7 +87,43 @@ def greedy_minimum_search(a, b, compute, result_a=None, result_b=None):
         return greedy_minimum_search(c, b, compute, result_b=result_b)
 
 
+class Interleaved:
+    """Iterable that combines other iterables in interleaving fashion: During iteration the next element is always
+    picked (respecting element sort-order) from the current top elements of the connected iterables."""
+    def __init__(self, *iterables, key=lambda obj: obj):
+        self.iterables = iterables
+        self.key = key
+
+    def __iter__(self):
+        firsts = []
+        for iterable in self.iterables:
+            try:
+                it = iter(iterable)
+            except TypeError:
+                it = iterable
+            try:
+                first = next(it)
+                firsts.append((it, first))
+            except StopIteration:
+                continue
+        while len(firsts) > 0:
+            firsts.sort(key=lambda it_first: self.key(it_first[1]))
+            it, first = firsts.pop(0)
+            yield first
+            try:
+                first = next(it)
+            except StopIteration:
+                continue
+            firsts.append((it, first))
+
+    def __len__(self):
+        return sum(map(len, self.iterables))
+
+
 class LimitingPool:
+    """Limits unbound ahead-processing of multiprocessing.Pool's imap method
+    before items get consumed by the iteration caller.
+    This prevents OOM issues in situations where items represent larger memory allocations."""
     def __init__(self, processes=None, limit_factor=2, sleeping_for=0.1):
         self.processes = os.cpu_count() if processes is None else processes
         self.pool = ThreadPool(processes=processes)

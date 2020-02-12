@@ -15,12 +15,11 @@ DEFAULT_CHANNELS = 1
 DEFAULT_WIDTH = 2
 DEFAULT_FORMAT = (DEFAULT_RATE, DEFAULT_CHANNELS, DEFAULT_WIDTH)
 
-AUDIO_TYPE_NP = 'np'
-AUDIO_TYPE_PCM = 'pcm'
-AUDIO_FILE_PREFIX = 'audio/'
-AUDIO_TYPE_WAV = AUDIO_FILE_PREFIX + 'wav'
-AUDIO_TYPE_OPUS = AUDIO_FILE_PREFIX + 'opus'
-LOADABLE_FILE_FORMATS = [AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS]
+AUDIO_TYPE_NP = 'application/x-np'
+AUDIO_TYPE_PCM = 'application/x-pcm'
+AUDIO_TYPE_WAV = 'audio/wav'
+AUDIO_TYPE_OPUS = 'application/x-opus'
+SERIALIZABLE_AUDIO_TYPES = [AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS]
 
 OPUS_PCM_LEN_SIZE = 4
 OPUS_RATE_SIZE = 4
@@ -28,57 +27,85 @@ OPUS_CHANNELS_SIZE = 1
 OPUS_WIDTH_SIZE = 1
 OPUS_CHUNK_LEN_SIZE = 2
 
-NP_TYPE_LOOKUP = [None, np.int8, np.int16, None, np.int32]
-UNSUPPORTED_TYPE = 'Unsupported audio type: {}'
-
 
 class Sample:
+    """Represents in-memory audio data of a certain (convertible) representation.
+    Attributes:
+        audio_type (str): See `__init__`.
+        audio_format (tuple:(int, int, int)): See `__init__`.
+        audio (obj): Audio data represented as indicated by `audio_type`
+        duration (float): Audio duration of the sample in seconds
+    """
     def __init__(self, audio_type, raw_data, audio_format=None):
+        """
+        Creates a Sample from a raw audio representation.
+        :param audio_type: Audio data representation type
+            CSupported types:
+                - AUDIO_TYPE_OPUS: Memory file representation (BytesIO) of Opus encoded audio
+                    wrapped by a custom container format (used in SDBs)
+                - AUDIO_TYPE_WAV: Memory file representation (BytesIO) of a Wave file
+                - AUDIO_TYPE_PCM: Binary representation (bytearray) of PCM encoded audio data (Wave file without header)
+                - AUDIO_TYPE_NP: NumPy representation of audio data (np.float32) - typically used for GPU feeding
+        :param raw_data: Audio data in the form of the provided representation type (see audio_type).
+            For types AUDIO_TYPE_OPUS or AUDIO_TYPE_WAV data can also be passed as a bytearray.
+        :param audio_format: Tuple of sample-rate, number of channels and sample-width.
+            Required in case of audio_type = AUDIO_TYPE_PCM or AUDIO_TYPE_NP,
+            as this information cannot be derived from raw audio data.
+        """
         self.audio_type = audio_type
         self.audio_format = audio_format
-        if audio_type in LOADABLE_FILE_FORMATS:
-            self.audio = io.BytesIO(raw_data)
+        if audio_type in SERIALIZABLE_AUDIO_TYPES:
+            self.audio = raw_data if isinstance(raw_data, io.BytesIO) else io.BytesIO(raw_data)
             self.duration = read_duration(audio_type, self.audio)
         else:
             self.audio = raw_data
             if self.audio_format is None:
-                raise ValueError('For audio type "{}" parameter "audio_format" is mandatory')
+                raise ValueError('For audio type "{}" parameter "audio_format" is mandatory'.format(self.audio_type))
             if audio_type == AUDIO_TYPE_PCM:
                 self.duration = get_pcm_duration(len(self.audio), self.audio_format)
             elif audio_type == AUDIO_TYPE_NP:
                 self.duration = get_np_duration(len(self.audio), self.audio_format)
             else:
-                raise ValueError(UNSUPPORTED_TYPE.format(self.audio_type))
+                raise ValueError('Unsupported audio type: {}'.format(self.audio_type))
 
-    def convert(self, new_audio_type):
+    def change_audio_type(self, new_audio_type):
+        """
+        In-place conversion of audio data into a different representation.
+        :param new_audio_type: New audio-type - see `__init__`.
+            Not supported: Converting from AUDIO_TYPE_NP into any other type.
+        """
         if self.audio_type == new_audio_type:
             return
-        if new_audio_type == AUDIO_TYPE_PCM and self.audio_type in LOADABLE_FILE_FORMATS:
+        if new_audio_type == AUDIO_TYPE_PCM and self.audio_type in SERIALIZABLE_AUDIO_TYPES:
             self.audio_format, audio = read_audio(self.audio_type, self.audio)
             self.audio.close()
             self.audio = audio
         elif new_audio_type == AUDIO_TYPE_NP:
-            self.convert(AUDIO_TYPE_PCM)
+            self.change_audio_type(AUDIO_TYPE_PCM)
             self.audio = pcm_to_np(self.audio_format, self.audio)
-        elif new_audio_type in LOADABLE_FILE_FORMATS:
-            self.convert(AUDIO_TYPE_PCM)
+        elif new_audio_type in SERIALIZABLE_AUDIO_TYPES:
+            self.change_audio_type(AUDIO_TYPE_PCM)
             audio_bytes = io.BytesIO()
             write_audio(new_audio_type, audio_bytes, self.audio_format, self.audio)
             audio_bytes.seek(0)
             self.audio = audio_bytes
         else:
-            raise RuntimeError('Audio conversion from "{}" to "{}" not supported'
+            raise RuntimeError('Changing audio representation type from "{}" to "{}" not supported'
                                .format(self.audio_type, new_audio_type))
         self.audio_type = new_audio_type
 
 
-def convert_samples(samples, audio_type=AUDIO_TYPE_PCM, processes=None):
-    def convert_sample(sample):
-        sample.convert(audio_type)
+def change_audio_types(samples, audio_type=AUDIO_TYPE_PCM, processes=None):
+    def change_audio_type(sample):
+        sample.change_audio_type(audio_type)
         return sample
     with LimitingPool(processes=processes) as pool:
-        for current_sample in pool.map(convert_sample, samples):
+        for current_sample in pool.map(change_audio_type, samples):
             yield current_sample
+
+
+def read_audio_format_from_wav_file(wav_file):
+    return wav_file.getframerate(), wav_file.getnchannels(), wav_file.getsampwidth()
 
 
 def write_audio_format_to_wav_file(wav_file, audio_format=DEFAULT_FORMAT):
@@ -88,17 +115,13 @@ def write_audio_format_to_wav_file(wav_file, audio_format=DEFAULT_FORMAT):
     wav_file.setsampwidth(width)
 
 
-def read_audio_format_from_wav_file(wav_file):
-    return wav_file.getframerate(), wav_file.getnchannels(), wav_file.getsampwidth()
-
-
-def get_num_samples(pcm_len, audio_format=DEFAULT_FORMAT):
+def get_num_samples(pcm_buffer_size, audio_format=DEFAULT_FORMAT):
     _, channels, width = audio_format
-    return pcm_len // (channels * width)
+    return pcm_buffer_size // (channels * width)
 
 
-def get_pcm_duration(pcm_len, audio_format=DEFAULT_FORMAT):
-    return get_num_samples(pcm_len, audio_format) / audio_format[0]
+def get_pcm_duration(pcm_buffer_size, audio_format=DEFAULT_FORMAT):
+    return get_num_samples(pcm_buffer_size, audio_format) / audio_format[0]
 
 
 def get_np_duration(np_len, audio_format=DEFAULT_FORMAT):
@@ -262,31 +285,31 @@ def write_opus(opus_file, audio_format, audio_data):
 
 def read_opus_header(opus_file):
     opus_file.seek(0)
-    pcm_len = unpack_number(opus_file.read(OPUS_PCM_LEN_SIZE))
+    pcm_buffer_size = unpack_number(opus_file.read(OPUS_PCM_LEN_SIZE))
     rate = unpack_number(opus_file.read(OPUS_RATE_SIZE))
     channels = unpack_number(opus_file.read(OPUS_CHANNELS_SIZE))
     width = unpack_number(opus_file.read(OPUS_WIDTH_SIZE))
-    return pcm_len, (rate, channels, width)
+    return pcm_buffer_size, (rate, channels, width)
 
 
 def read_opus(opus_file):
-    pcm_len, audio_format = read_opus_header(opus_file)
+    pcm_buffer_size, audio_format = read_opus_header(opus_file)
     rate, channels, _ = audio_format
     frame_size = get_opus_frame_size(rate)
     decoder = opuslib.Decoder(rate, channels)
     audio_data = bytearray()
-    while len(audio_data) < pcm_len:
+    while len(audio_data) < pcm_buffer_size:
         chunk_len = unpack_number(opus_file.read(OPUS_CHUNK_LEN_SIZE))
         chunk = opus_file.read(chunk_len)
         decoded = decoder.decode(chunk, frame_size)
         audio_data.extend(decoded)
-    audio_data = audio_data[:pcm_len]
+    audio_data = audio_data[:pcm_buffer_size]
     return audio_format, audio_data
 
 
 def write_wav(wav_file, audio_format, pcm_data):
     with wave.open(wav_file, 'wb') as wav_file_writer:
-        write_audio_format_to_wav_file(wav_file_writer, audio_format)
+        write_audio_format_to_wav_file(wav_file, audio_format=audio_format)
         wav_file_writer.writeframes(pcm_data)
 
 
@@ -303,7 +326,7 @@ def read_audio(audio_type, audio_file):
         return read_wav(audio_file)
     if audio_type == AUDIO_TYPE_OPUS:
         return read_opus(audio_file)
-    raise ValueError(UNSUPPORTED_TYPE.format(audio_type))
+    raise ValueError('Unsupported audio type: {}'.format(audio_type))
 
 
 def write_audio(audio_type, audio_file, audio_format, pcm_data):
@@ -311,7 +334,7 @@ def write_audio(audio_type, audio_file, audio_format, pcm_data):
         return write_wav(audio_file, audio_format, pcm_data)
     if audio_type == AUDIO_TYPE_OPUS:
         return write_opus(audio_file, audio_format, pcm_data)
-    raise ValueError(UNSUPPORTED_TYPE.format(audio_type))
+    raise ValueError('Unsupported audio type: {}'.format(audio_type))
 
 
 def read_wav_duration(wav_file):
@@ -321,8 +344,8 @@ def read_wav_duration(wav_file):
 
 
 def read_opus_duration(opus_file):
-    pcm_len, audio_format = read_opus_header(opus_file)
-    return get_pcm_duration(pcm_len, audio_format)
+    pcm_buffer_size, audio_format = read_opus_header(opus_file)
+    return get_pcm_duration(pcm_buffer_size, audio_format)
 
 
 def read_duration(audio_type, audio_file):
@@ -330,14 +353,14 @@ def read_duration(audio_type, audio_file):
         return read_wav_duration(audio_file)
     if audio_type == AUDIO_TYPE_OPUS:
         return read_opus_duration(audio_file)
-    raise ValueError(UNSUPPORTED_TYPE.format(audio_type))
+    raise ValueError('Unsupported audio type: {}'.format(audio_type))
 
 
 def pcm_to_np(audio_format, pcm_data):
     _, channels, width = audio_format
-    if width < 1 or width > 4 or width == 3:
+    if width not in [1, 2, 4]:
         raise ValueError('Unsupported sample width: {}'.format(width))
-    dtype = NP_TYPE_LOOKUP[width]
+    dtype = [None, np.int8, np.int16, None, np.int32][width]
     samples = np.frombuffer(pcm_data, dtype=dtype)
     samples = samples[::channels]  # limited to mono for now
     samples = samples.astype(np.float32) / np.iinfo(dtype).max
