@@ -309,7 +309,7 @@ def read_opus(opus_file):
 
 def write_wav(wav_file, audio_format, pcm_data):
     with wave.open(wav_file, 'wb') as wav_file_writer:
-        write_audio_format_to_wav_file(wav_file, audio_format=audio_format)
+        write_audio_format_to_wav_file(wav_file_writer, audio_format=audio_format)
         wav_file_writer.writeframes(pcm_data)
 
 

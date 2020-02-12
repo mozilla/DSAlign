@@ -179,7 +179,7 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
 
         bucket_views = list(map(lambda b: buffered_view(b[0], b[0] + b[1]), self.buckets))
         interleaved = Interleaved(*bucket_views, key=lambda s: s.duration)
-        with DirectSDBWriter(self.sdb_filename, buffering=self.buffering) as sdb_writer:
+        with DirectSDBWriter(self.sdb_filename, buffering=self.buffering, audio_type=self.audio_type) as sdb_writer:
             for sample in interleaved:
                 sdb_writer.add(sample)
         os.unlink(self.tmp_sdb_filename)

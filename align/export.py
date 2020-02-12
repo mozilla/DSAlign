@@ -16,13 +16,18 @@ from tqdm import tqdm
 from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
-from audio import DEFAULT_FORMAT, AUDIO_TYPE_PCM, AUDIO_TYPE_OPUS,\
+from audio import DEFAULT_FORMAT, AUDIO_TYPE_PCM, AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS,\
     ensure_wav_with_format, extract_audio, change_audio_types, write_audio_format_to_wav_file
 from sample_collections import SortingSDBWriter, CollectionSample
 from utils import MEGABYTE, parse_file_size
 
+UNKNOWN = '<UNKNOWN>'
+AUDIO_TYPE_LOOKUP = {
+    'wav': AUDIO_TYPE_WAV,
+    'opus': AUDIO_TYPE_OPUS
+}
+
 audio_format = DEFAULT_FORMAT
-unknown = '<unknown>'
 
 
 def fail(message, code=1):
@@ -123,6 +128,8 @@ def main(args):
                         help='Memory bucket size for external sorting of SDBs')
     parser.add_argument('--sdb-workers', type=int, default=None,
                         help='Number of SDB encoding workers')
+    parser.add_argument('--sdb-audio-type', default='opus', choices=AUDIO_TYPE_LOOKUP.keys(),
+                        help='Audio representation inside target SDBs')
     parser.add_argument('--buffer', default='1MB',
                         help='Buffer size for writing files (~16MB by default)')
     parser.add_argument('--force', action="store_true",
@@ -266,14 +273,14 @@ def main(args):
             if meta_field in meta:
                 for value in meta[meta_field]:
                     return value
-        return unknown
+        return UNKNOWN
 
     if args.debias is not None:
         for debias in args.debias:
             grouped = engroup(fragments, lambda f: get_meta(f, debias))
-            if unknown in grouped:
-                fragments = grouped[unknown]
-                del grouped[unknown]
+            if UNKNOWN in grouped:
+                fragments = grouped[UNKNOWN]
+                del grouped[UNKNOWN]
             else:
                 fragments = []
             counts = list(map(lambda f: len(f), grouped.values()))
@@ -379,21 +386,37 @@ def main(args):
                     yield b'', fragment
 
     if args.sdb:
+        audio_type = AUDIO_TYPE_LOOKUP[args.sdb_audio_type]
+        print(audio_type)
         for list_name in lists.keys():
             sdb_path = os.path.join(target_dir, list_name + '.sdb')
-            lists[list_name] = SortingSDBWriter(sdb_path, buffering=args.buffer, cache_size=args.sdb_bucket_size)
+            if dry_run:
+                logging.debug('Would create SDB "{}"'.format(sdb_path))
+            else:
+                lists[list_name] = SortingSDBWriter(sdb_path,
+                                                    audio_type=audio_type,
+                                                    buffering=args.buffer,
+                                                    cache_size=args.sdb_bucket_size)
 
         def to_samples():
-            for s, f in list_fragments():
-                yield CollectionSample(f['list-name'], AUDIO_TYPE_PCM, s, f['aligned'], audio_format=audio_format)
+            for pcm_data, f in list_fragments():
+                yield CollectionSample(f['list-name'],
+                                       AUDIO_TYPE_PCM,
+                                       pcm_data,
+                                       f['aligned'],
+                                       audio_format=audio_format)
 
-        for sample in progress(change_audio_types(to_samples(), audio_type=AUDIO_TYPE_OPUS, processes=args.sdb_workers),
-                               desc='Exporting samples', total=len(fragments)):
+        samples = change_audio_types(to_samples(),
+                                     audio_type=audio_type,
+                                     processes=args.sdb_workers) if load_samples else to_samples()
+        for sample in progress(samples, desc='Exporting samples', total=len(fragments)):
             list_name = sample.sample_id
-            sdb = lists[list_name]
-            sdb.add(sample)
-        for sdb in lists.values():
-            sdb.close()
+            if not dry_run:
+                sdb = lists[list_name]
+                sdb.add(sample)
+        if not dry_run:
+            for sdb in lists.values():
+                sdb.close()
         return
 
     created_directories = {}
