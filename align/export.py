@@ -387,7 +387,6 @@ def main(args):
 
     if args.sdb:
         audio_type = AUDIO_TYPE_LOOKUP[args.sdb_audio_type]
-        print(audio_type)
         for list_name in lists.keys():
             sdb_path = os.path.join(target_dir, list_name + '.sdb')
             if dry_run:
