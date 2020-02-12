@@ -12,6 +12,7 @@ BIG_ENDIAN = 'big'
 INT_SIZE = 4
 BIGINT_SIZE = 2 * INT_SIZE
 MAGIC = b'SAMPLEDB'
+INDEXING_FRACTION = 0.05
 
 BUFFER_SIZE = 1 * MEGABYTE
 CACHE_SIZE = 1 * GIGABYTE
@@ -89,7 +90,7 @@ class DirectSDBWriter:
         self.sdb_file.write(buffer)
         self.num_samples += 1
 
-    def close(self):
+    def finalize(self):
         if self.sdb_file is None:
             return
         offset_index = self.sdb_file.tell()
@@ -99,12 +100,18 @@ class DirectSDBWriter:
 
         self.sdb_file.seek(offset_index + BIGINT_SIZE)
         self.write_big_int(self.num_samples)
-        for offset in self.offsets:
+        for index, offset in enumerate(self.offsets):
             self.write_big_int(offset)
+            yield index / len(self.offsets)
         offset_end = self.sdb_file.tell()
         self.sdb_file.seek(offset_index)
         self.write_big_int(offset_end - offset_index - BIGINT_SIZE)
         self.sdb_file.close()
+        self.sdb_file = None
+
+    def close(self):
+        for _ in self.finalize():
+            pass
 
     def __len__(self):
         return len(self.offsets)
@@ -143,7 +150,7 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
         self.bucket.sort(key=lambda s: s.duration)
         for sample in self.bucket:
             self.tmp_sdb.add(sample)
-        self.buckets.append((self.bucket_offset, len(self.bucket)))
+        self.buckets.append((self.bucket_offset, self.bucket_offset + len(self.bucket)))
         self.bucket_offset += len(self.bucket)
         self.bucket = []
         self.overall_size += self.bucket_size
@@ -156,18 +163,21 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
         if self.bucket_size > self.cache_size:
             self.finish_bucket()
 
-    def close(self):
+    def finalize(self):
         if self.tmp_sdb is None:
             return
         self.finish_bucket()
         num_samples = len(self.tmp_sdb)
-        self.tmp_sdb.close()
+        for frac in self.tmp_sdb.finalize():
+            yield frac * INDEXING_FRACTION
+        self.tmp_sdb = None
         avg_sample_size = self.overall_size / num_samples
         max_cached_samples = self.cache_size / avg_sample_size
         buffer_size = max(1, int(max_cached_samples / len(self.buckets)))
         sdb_reader = SDB(self.tmp_sdb_filename, buffering=self.buffering)
 
-        def buffered_view(start, end):
+        def buffered_view(bucket):
+            start, end = bucket
             buffer = []
             current_offset = start
             while current_offset < end:
@@ -177,12 +187,20 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
                 while len(buffer) > 0:
                     yield buffer.pop(-1)
 
-        bucket_views = list(map(lambda b: buffered_view(b[0], b[0] + b[1]), self.buckets))
+        bucket_views = list(map(buffered_view, self.buckets))
         interleaved = Interleaved(*bucket_views, key=lambda s: s.duration)
         with DirectSDBWriter(self.sdb_filename, buffering=self.buffering, audio_type=self.audio_type) as sdb_writer:
-            for sample in interleaved:
+            factor = (1.0 - 2.0 * INDEXING_FRACTION) / num_samples
+            for index, sample in enumerate(interleaved):
                 sdb_writer.add(sample)
+                yield INDEXING_FRACTION + index * factor
+            for frac in sdb_writer.finalize():
+                yield (1.0 - INDEXING_FRACTION) + frac * INDEXING_FRACTION
         os.unlink(self.tmp_sdb_filename)
+
+    def close(self):
+        for _ in self.finalize():
+            pass
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()

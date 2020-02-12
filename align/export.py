@@ -165,9 +165,9 @@ def main(args):
     logging.basicConfig(stream=sys.stderr, level=args.loglevel if args.loglevel else 20)
     logging.getLogger('sox').setLevel(logging.ERROR)
 
-    def progress(iter, desc='Processing', total=None):
+    def progress(it=None, desc='Processing', total=None):
         desc = desc.rjust(24)
-        return iter if args.no_progress else tqdm(iter, desc=desc, total=total, ncols=120)
+        return iter if args.no_progress else tqdm(it, desc=desc, total=total, ncols=120)
 
     logging.debug("Start")
 
@@ -415,7 +415,10 @@ def main(args):
                 sdb.add(sample)
         if not dry_run:
             for sdb in lists.values():
-                sdb.close()
+                with progress(desc='Finalizing SDB "{}"'.format(sdb.sdb_filename), total=1000) as bar:
+                    for frac in sdb.finalize():
+                        bar.n = int(frac * 1001)
+                        bar.refresh()
         return
 
     created_directories = {}
