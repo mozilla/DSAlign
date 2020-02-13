@@ -2,7 +2,6 @@ import os
 import io
 import sox
 import wave
-import opuslib
 import tempfile
 import collections
 import numpy as np
@@ -268,6 +267,7 @@ def get_opus_frame_size(rate):
 def write_opus(opus_file, audio_format, audio_data):
     rate, channels, width = audio_format
     frame_size = get_opus_frame_size(rate)
+    import opuslib
     encoder = opuslib.Encoder(rate, channels, opuslib.APPLICATION_AUDIO)
     chunk_size = frame_size * channels * width
     opus_file.write(pack_number(len(audio_data), OPUS_PCM_LEN_SIZE))
@@ -296,6 +296,7 @@ def read_opus(opus_file):
     pcm_buffer_size, audio_format = read_opus_header(opus_file)
     rate, channels, _ = audio_format
     frame_size = get_opus_frame_size(rate)
+    import opuslib
     decoder = opuslib.Decoder(rate, channels)
     audio_data = bytearray()
     while len(audio_data) < pcm_buffer_size:

@@ -166,7 +166,7 @@ def main(args):
     logging.getLogger('sox').setLevel(logging.ERROR)
 
     def progress(it=None, desc='Processing', total=None):
-        desc = desc.rjust(24)
+        desc = desc.rjust(30)
         return iter if args.no_progress else tqdm(it, desc=desc, total=total, ncols=120)
 
     logging.debug("Start")
@@ -414,8 +414,8 @@ def main(args):
                 sdb = lists[list_name]
                 sdb.add(sample)
         if not dry_run:
-            for sdb in lists.values():
-                with progress(desc='Finalizing SDB "{}"'.format(sdb.sdb_filename), total=1000) as bar:
+            for list_name, sdb in lists.items():
+                with progress(desc='Finalizing "{}.sdb"'.format(list_name), total=1000) as bar:
                     for frac in sdb.finalize():
                         bar.n = int(frac * 1001)
                         bar.refresh()
