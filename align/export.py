@@ -26,6 +26,7 @@ AUDIO_TYPE_LOOKUP = {
     'wav': AUDIO_TYPE_WAV,
     'opus': AUDIO_TYPE_OPUS
 }
+SET_NAMES = ['train', 'dev', 'test']
 
 audio_format = DEFAULT_FORMAT
 
@@ -115,6 +116,10 @@ def main(args):
                         help='Split each partition except "other" into train/dev/test sub-sets.')
     parser.add_argument('--split-field', type=str,
                         help='Sample meta field that should be used for splitting (e.g. "speaker")')
+    for sub_set in SET_NAMES:
+        parser.add_argument('--assign-' + sub_set,
+                            help='Comma separated list of --split-field values that are to be assigned to sub-set '
+                                 '"{}"'.format(sub_set))
     parser.add_argument('--split-seed', type=int,
                         help='Random seed for set splitting')
 
@@ -161,6 +166,18 @@ def main(args):
 
     args.buffer = parse_file_size(args.buffer)
     args.sdb_bucket_size = parse_file_size(args.sdb_bucket_size)
+
+    set_assignments = {}
+    for set_index, set_name in enumerate(SET_NAMES):
+        attr_name = 'assign_' + set_name
+        if hasattr(args, attr_name):
+            set_entities = getattr(args, attr_name)
+            if set_entities is not None:
+                for entity_id in str(set_entities).split(','):
+                    if entity_id in set_assignments:
+                        fail('Unable to assign entity "{}" to set "{}", as it is already assigned to set "{}"'
+                             .format(entity_id, set_name, SET_NAMES[set_assignments[entity_id]]))
+                    set_assignments[entity_id] = set_index
 
     logging.basicConfig(stream=sys.stderr, level=args.loglevel if args.loglevel else 20)
     logging.getLogger('sox').setLevel(logging.ERROR)
@@ -334,10 +351,21 @@ def main(args):
         partitions = list(map(lambda part_frags: (part_frags[0],
                                                   get_sample_size(len(part_frags[1])),
                                                   engroup(part_frags[1], lambda pf: get_meta(pf, args.split_field)),
-                                                  [[], []]),
+                                                  [[], [], []]),
                               partitions.items()))
-        for partition, sample_size, _, sample_sets in partitions:
-            while len(metas) > 0 and (len(sample_sets[0]) < sample_size or len(sample_sets[1]) < sample_size):
+        remaining_metas = []
+        for meta in metas:
+            if meta in set_assignments:
+                set_index = set_assignments[meta]
+                for _, _, partition_portions, sample_sets in partitions:
+                    if meta in partition_portions:
+                        sample_sets[set_index].extend(partition_portions[meta])
+                        del partition_portions[meta]
+            else:
+                remaining_metas.append(meta)
+        metas = remaining_metas
+        for _, sample_size, _, sample_sets in partitions:
+            while len(metas) > 0 and (len(sample_sets[1]) < sample_size or len(sample_sets[2]) < sample_size):
                 for sample_set_index, sample_set in enumerate(sample_sets):
                     if len(metas) > 0 and sample_size > len(sample_set):
                         meta = metas.pop(0)
@@ -346,11 +374,10 @@ def main(args):
                                 other_sample_sets[sample_set_index].extend(partition_portions[meta])
                                 del partition_portions[meta]
         for partition, sample_size, partition_portions, sample_sets in partitions:
-            train_set = []
             for portion in partition_portions.values():
-                train_set.extend(portion)
-            for set_name, set_fragments in [('train', train_set), ('dev', sample_sets[0]), ('test', sample_sets[1])]:
-                assign_fragments(set_fragments, partition + '-' + set_name)
+                sample_sets[0].extend(portion)
+            for set_index, set_name in enumerate(SET_NAMES):
+                assign_fragments(sample_sets[set_index], partition + '-' + set_name)
     else:
         for partition, partition_fragments in partitions.items():
             if args.split:
@@ -360,8 +387,9 @@ def main(args):
                 partition_fragments = partition_fragments[sample_size:]
                 dev_set = partition_fragments[:sample_size]
                 train_set = partition_fragments[sample_size:]
-                for set_name, set_fragments in [('train', train_set), ('dev', dev_set), ('test', test_set)]:
-                    assign_fragments(set_fragments, partition + '-' + set_name)
+                sample_sets = [train_set, dev_set, test_set]
+                for set_index, set_name in enumerate(SET_NAMES):
+                    assign_fragments(sample_sets[set_index], partition + '-' + set_name)
             else:
                 assign_fragments(partition_fragments, partition)
 
@@ -399,26 +427,29 @@ def main(args):
 
         def to_samples():
             for pcm_data, f in list_fragments():
-                yield CollectionSample(f['list-name'],
-                                       AUDIO_TYPE_PCM,
-                                       pcm_data,
-                                       f['aligned'],
-                                       audio_format=audio_format)
+                cs = CollectionSample(AUDIO_TYPE_PCM, pcm_data, f['aligned'], audio_format=audio_format)
+                cs.meta = f
+                yield cs
 
         samples = change_audio_types(to_samples(),
                                      audio_type=audio_type,
                                      processes=args.sdb_workers) if load_samples else to_samples()
         for sample in progress(samples, desc='Exporting samples', total=len(fragments)):
-            list_name = sample.sample_id
+            list_name = sample.meta['list-name']
             if not dry_run:
                 sdb = lists[list_name]
                 sdb.add(sample)
-        if not dry_run:
-            for list_name, sdb in lists.items():
-                with progress(desc='Finalizing "{}.sdb"'.format(list_name), total=1000) as bar:
+        for list_name, sdb in lists.items():
+            meta_path = os.path.join(target_dir, list_name + '.meta')
+            if not dry_run:
+                with progress(desc='Finalizing {}'.format(list_name), total=1000) as bar:
                     for frac in sdb.finalize():
                         bar.n = int(frac * 1001)
                         bar.refresh()
+                with open(meta_path, 'w') as meta_file:
+                    json.dump(sdb.meta_dict, meta_file)
+            else:
+                logging.debug('Would write meta file "{}"'.format(meta_path))
         return
 
     created_directories = {}

@@ -12,12 +12,12 @@ BIG_ENDIAN = 'big'
 INT_SIZE = 4
 BIGINT_SIZE = 2 * INT_SIZE
 MAGIC = b'SAMPLEDB'
-INDEXING_FRACTION = 0.05
 
 BUFFER_SIZE = 1 * MEGABYTE
 CACHE_SIZE = 1 * GIGABYTE
 
 SCHEMA_KEY = 'schema'
+CONTENT_KEY = 'content'
 MIME_TYPE_KEY = 'mime-type'
 MIME_TYPE_TEXT = 'text/plain'
 CONTENT_TYPE_SPEECH = 'speech'
@@ -27,24 +27,26 @@ CONTENT_TYPE_TRANSCRIPT = 'transcript'
 class CollectionSample(Sample):
     """In-memory sample collection sample representing an utterance.
     Derived from util.audio.Sample and used by sample collection readers and writers."""
-    def __init__(self, sample_id, audio_type, raw_data, transcript, audio_format=DEFAULT_FORMAT):
+    def __init__(self, audio_type, raw_data, transcript, audio_format=DEFAULT_FORMAT, sample_id=None):
         """
         Creates an in-memory speech sample together with a transcript of the utterance (label).
-        :param sample_id: Tracking ID used for debugging
         :param audio_type: See util.audio.Sample.__init__ .
         :param raw_data: See util.audio.Sample.__init__ .
         :param transcript: Transcript of the sample's utterance
         :param audio_format: See util.audio.Sample.__init__ .
+        :param sample_id: Tracking ID
         """
         super().__init__(audio_type, raw_data, audio_format=audio_format)
         self.sample_id = sample_id
         self.transcript = transcript
+        self.meta = None
 
 
 class DirectSDBWriter:
     """Sample collection writer for creating a Sample DB (SDB) file"""
-    def __init__(self, sdb_filename, buffering=BUFFER_SIZE, audio_type=AUDIO_TYPE_OPUS):
+    def __init__(self, sdb_filename, buffering=BUFFER_SIZE, audio_type=AUDIO_TYPE_OPUS, id_prefix=None):
         self.sdb_filename = sdb_filename
+        self.id_prefix = sdb_filename if id_prefix is None else id_prefix
         if audio_type not in SERIALIZABLE_AUDIO_TYPES:
             raise ValueError('Audio type "{}" not supported'.format(audio_type))
         self.audio_type = audio_type
@@ -55,10 +57,10 @@ class DirectSDBWriter:
         self.sdb_file.write(MAGIC)
 
         meta_data = {
-            SCHEMA_KEY: {
-                CONTENT_TYPE_SPEECH: {MIME_TYPE_KEY: audio_type},
-                CONTENT_TYPE_TRANSCRIPT: {MIME_TYPE_KEY: MIME_TYPE_TEXT}
-            }
+            SCHEMA_KEY: [
+                {CONTENT_KEY: CONTENT_TYPE_SPEECH, MIME_TYPE_KEY: audio_type},
+                {CONTENT_KEY: CONTENT_TYPE_TRANSCRIPT, MIME_TYPE_KEY: MIME_TYPE_TEXT}
+            ]
         }
         meta_data = json.dumps(meta_data).encode()
         self.write_big_int(len(meta_data))
@@ -88,9 +90,11 @@ class DirectSDBWriter:
         buffer = b''.join([entry_len, opus_len, opus, transcript_len, transcript])
         self.offsets.append(self.sdb_file.tell())
         self.sdb_file.write(buffer)
+        sample.sample_id = '{}:{}'.format(self.id_prefix, self.num_samples)
         self.num_samples += 1
+        return sample.sample_id
 
-    def finalize(self):
+    def close(self):
         if self.sdb_file is None:
             return
         offset_index = self.sdb_file.tell()
@@ -102,16 +106,11 @@ class DirectSDBWriter:
         self.write_big_int(self.num_samples)
         for index, offset in enumerate(self.offsets):
             self.write_big_int(offset)
-            yield index / len(self.offsets)
         offset_end = self.sdb_file.tell()
         self.sdb_file.seek(offset_index)
         self.write_big_int(offset_end - offset_index - BIGINT_SIZE)
         self.sdb_file.close()
         self.sdb_file = None
-
-    def close(self):
-        for _ in self.finalize():
-            pass
 
     def __len__(self):
         return len(self.offsets)
@@ -126,15 +125,21 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
                  tmp_sdb_filename=None,
                  cache_size=CACHE_SIZE,
                  buffering=BUFFER_SIZE,
-                 audio_type=AUDIO_TYPE_OPUS):
+                 audio_type=AUDIO_TYPE_OPUS,
+                 id_prefix=None):
         self.sdb_filename = sdb_filename
+        self.id_prefix = sdb_filename if id_prefix is None else id_prefix
         self.buffering = buffering
         self.tmp_sdb_filename = (sdb_filename + '.tmp') if tmp_sdb_filename is None else tmp_sdb_filename
         if audio_type not in SERIALIZABLE_AUDIO_TYPES:
             raise ValueError('Audio type "{}" not supported'.format(audio_type))
         self.audio_type = audio_type
-        self.tmp_sdb = DirectSDBWriter(self.tmp_sdb_filename, buffering=buffering, audio_type=audio_type)
+        self.tmp_sdb = DirectSDBWriter(self.tmp_sdb_filename,
+                                       buffering=buffering,
+                                       audio_type=audio_type,
+                                       id_prefix='#pre-sorted')
         self.cache_size = cache_size
+        self.meta_dict = {}
         self.buckets = []
         self.bucket = []
         self.bucket_offset = 0
@@ -149,7 +154,10 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
             return
         self.bucket.sort(key=lambda s: s.duration)
         for sample in self.bucket:
-            self.tmp_sdb.add(sample)
+            old_id = sample.sample_id
+            new_id = self.tmp_sdb.add(sample)
+            self.meta_dict[new_id] = self.meta_dict[old_id]
+            del self.meta_dict[old_id]
         self.buckets.append((self.bucket_offset, self.bucket_offset + len(self.bucket)))
         self.bucket_offset += len(self.bucket)
         self.bucket = []
@@ -157,24 +165,26 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
         self.bucket_size = 0
 
     def add(self, sample):
-        sample.change_audio_type(self.audio_type)
-        self.bucket.append(sample)
-        self.bucket_size += len(sample.audio.getbuffer())
         if self.bucket_size > self.cache_size:
             self.finish_bucket()
+        sample.change_audio_type(self.audio_type)
+        sample.sample_id = '#unsorted:{}'.format(len(self.bucket))
+        self.meta_dict[sample.sample_id] = sample.meta
+        self.bucket.append(sample)
+        self.bucket_size += len(sample.audio.getbuffer())
+        return sample.sample_id
 
     def finalize(self):
         if self.tmp_sdb is None:
             return
         self.finish_bucket()
         num_samples = len(self.tmp_sdb)
-        for frac in self.tmp_sdb.finalize():
-            yield frac * INDEXING_FRACTION
+        self.tmp_sdb.close()
         self.tmp_sdb = None
         avg_sample_size = self.overall_size / num_samples
         max_cached_samples = self.cache_size / avg_sample_size
         buffer_size = max(1, int(max_cached_samples / len(self.buckets)))
-        sdb_reader = SDB(self.tmp_sdb_filename, buffering=self.buffering)
+        sdb_reader = SDB(self.tmp_sdb_filename, buffering=self.buffering, id_prefix='#pre-sorted')
 
         def buffered_view(bucket):
             start, end = bucket
@@ -189,13 +199,16 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
 
         bucket_views = list(map(buffered_view, self.buckets))
         interleaved = Interleaved(*bucket_views, key=lambda s: s.duration)
-        with DirectSDBWriter(self.sdb_filename, buffering=self.buffering, audio_type=self.audio_type) as sdb_writer:
-            factor = (1.0 - 2.0 * INDEXING_FRACTION) / num_samples
+        with DirectSDBWriter(self.sdb_filename,
+                             buffering=self.buffering,
+                             audio_type=self.audio_type,
+                             id_prefix=self.id_prefix) as sdb_writer:
             for index, sample in enumerate(interleaved):
-                sdb_writer.add(sample)
-                yield INDEXING_FRACTION + index * factor
-            for frac in sdb_writer.finalize():
-                yield (1.0 - INDEXING_FRACTION) + frac * INDEXING_FRACTION
+                old_id = sample.sample_id
+                new_id = sdb_writer.add(sample)
+                self.meta_dict[new_id] = self.meta_dict[old_id]
+                del self.meta_dict[old_id]
+                yield index / num_samples
         os.unlink(self.tmp_sdb_filename)
 
     def close(self):
@@ -208,12 +221,11 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
 
 class SDB:  # pylint: disable=too-many-instance-attributes
     """Sample collection reader for reading a Sample DB (SDB) file"""
-    def __init__(self, sdb_filename, buffering=BUFFER_SIZE):
-        self.meta = {}
-        self.schema = []
-        self.offsets = []
+    def __init__(self, sdb_filename, buffering=BUFFER_SIZE, id_prefix=None):
         self.sdb_filename = sdb_filename
+        self.id_prefix = sdb_filename if id_prefix is None else id_prefix
         self.sdb_file = open(sdb_filename, 'rb', buffering=buffering)
+        self.offsets = []
         if self.sdb_file.read(len(MAGIC)) != MAGIC:
             raise RuntimeError('No Sample Database')
         meta_chunk_len = self.read_big_int()
@@ -221,28 +233,17 @@ class SDB:  # pylint: disable=too-many-instance-attributes
         if SCHEMA_KEY not in self.meta:
             raise RuntimeError('Missing schema')
         self.schema = self.meta[SCHEMA_KEY]
-        content_types = sorted(self.schema.keys())
-        for column_index, content_type in enumerate(content_types):
-            entry = self.schema[content_type]
-            if not isinstance(entry, dict):
-                raise RuntimeError('Malformed schema entry for content-type "{}"'.format(content_type))
-            entry['column_index'] = column_index
 
-        if CONTENT_TYPE_SPEECH not in self.schema:
+        speech_columns = self.find_columns(content=CONTENT_TYPE_SPEECH, mime_type=SERIALIZABLE_AUDIO_TYPES)
+        if not speech_columns:
             raise RuntimeError('No speech data (missing in schema)')
-        speech_column = self.schema[CONTENT_TYPE_SPEECH]
-        self.speech_index = speech_column['column_index']
-        self.audio_type = speech_column[MIME_TYPE_KEY]
-        if self.audio_type not in SERIALIZABLE_AUDIO_TYPES:
-            raise RuntimeError('Unsupported audio format: {}'.format(self.audio_type))
+        self.speech_index = speech_columns[0]
+        self.audio_type = self.schema[self.speech_index][MIME_TYPE_KEY]
 
-        if CONTENT_TYPE_TRANSCRIPT not in self.schema:
+        transcript_columns = self.find_columns(content=CONTENT_TYPE_TRANSCRIPT, mime_type=MIME_TYPE_TEXT)
+        if not transcript_columns:
             raise RuntimeError('No transcript data (missing in schema)')
-        transcript_column = self.schema[CONTENT_TYPE_TRANSCRIPT]
-        self.transcript_index = transcript_column['column_index']
-        text_type = transcript_column[MIME_TYPE_KEY]
-        if text_type != MIME_TYPE_TEXT:
-            raise RuntimeError('Unsupported text type: {}'.format(text_type))
+        self.transcript_index = transcript_columns[0]
 
         sample_chunk_len = self.read_big_int()
         self.sdb_file.seek(sample_chunk_len + BIGINT_SIZE, 1)
@@ -255,6 +256,24 @@ class SDB:  # pylint: disable=too-many-instance-attributes
 
     def read_big_int(self):
         return int.from_bytes(self.sdb_file.read(BIGINT_SIZE), BIG_ENDIAN)
+
+    def find_columns(self, content=None, mime_type=None):
+        criteria = []
+        if content is not None:
+            criteria.append((CONTENT_KEY, content))
+        if mime_type is not None:
+            criteria.append((MIME_TYPE_KEY, mime_type))
+        if len(criteria) == 0:
+            raise ValueError('At least one of "content" or "mime-type" has to be provided')
+        matches = []
+        for index, column in enumerate(self.schema):
+            matched = 0
+            for field, value in criteria:
+                if column[field] == value or (isinstance(value, list) and column[field] in value):
+                    matched += 1
+            if matched == len(criteria):
+                matches.append(index)
+        return matches
 
     def read_row(self, row_index, *columns):
         columns = list(columns)
@@ -278,8 +297,7 @@ class SDB:  # pylint: disable=too-many-instance-attributes
     def __getitem__(self, i):
         audio_data, transcript = self.read_row(i, self.speech_index, self.transcript_index)
         transcript = transcript.decode()
-        sample_id = self.sdb_filename + ':' + str(i)
-        return CollectionSample(sample_id, self.audio_type, audio_data, transcript)
+        return CollectionSample(self.audio_type, audio_data, transcript, sample_id='{}:{}'.format(self.id_prefix, i))
 
     def __iter__(self):
         for i in range(len(self.offsets)):
@@ -314,7 +332,7 @@ class CSV:
     def __getitem__(self, i):
         wav_filename, _, transcript = self.rows[i]
         with open(wav_filename, 'rb') as wav_file:
-            return CollectionSample(wav_filename, AUDIO_TYPE_WAV, wav_file.read(), transcript)
+            return CollectionSample(AUDIO_TYPE_WAV, wav_file.read(), transcript, sample_id=wav_filename)
 
     def __iter__(self):
         for i in range(len(self.rows)):
