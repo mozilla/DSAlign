@@ -187,8 +187,11 @@ def main(args):
     logging.getLogger('sox').setLevel(logging.ERROR)
 
     def progress(it=None, desc='Processing', total=None):
-        desc = desc.rjust(30)
-        return iter if args.no_progress else tqdm(it, desc=desc, total=total, ncols=120)
+        if args.no_progress:
+            logging.info(desc)
+            return it
+        else:
+            return tqdm(it, desc=desc.rjust(30), total=total, ncols=120)
 
     logging.debug("Start")
 
@@ -454,10 +457,15 @@ def main(args):
         for list_name, sdb in lists.items():
             meta_path = os.path.join(target_dir, list_name + '.meta')
             if not dry_run:
-                with progress(desc='Finalizing {}'.format(list_name), total=1000) as bar:
-                    for frac in sdb.finalize():
-                        bar.n = int(frac * 1001)
-                        bar.refresh()
+                if args.no_progress:
+                    logging.info('Finalizing {}'.format(list_name))
+                    sdb.close()
+                else:
+                    with progress(desc='Finalizing {}'.format(list_name), total=1000) as bar:
+                        for frac in sdb.finalize():
+                            bar.n = int(frac * 1001)
+                            bar.refresh()
+                logging.info('Writing meta file "{}"'.format(meta_path))
                 with open(meta_path, 'w') as meta_file:
                     json.dump(sdb.meta_dict, meta_file)
             else:
