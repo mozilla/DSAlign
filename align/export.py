@@ -143,16 +143,16 @@ def main(args):
                         help='Buffer size for writing files (~16MB by default)')
     parser.add_argument('--force', action="store_true",
                         help='Overwrite existing files')
-    parser.add_argument('--format', type=str, default='csv',
-                        help='Sample list format - one of (json|csv)')
+    parser.add_argument('--no-meta', action="store_true",
+                        help='No writing of meta data files')
+    parser.add_argument('--pretty', action="store_true",
+                        help='Writes indented JSON output')
     parser.add_argument('--rate', type=int, default=16000,
                         help='Export wav-files with this sample rate')
     parser.add_argument('--channels', type=int, default=1,
                         help='Export wav-files with this number of channels')
     parser.add_argument('--width', type=int, default=2,
                         help='Export wav-files with this sample width (bytes)')
-    parser.add_argument('--pretty', action="store_true",
-                        help='Writes indented JSON output')
 
     parser.add_argument('--workers', type=int, default=2,
                         help='Number of workers for loading and re-sampling audio files. Default: 2')
@@ -338,12 +338,13 @@ def main(args):
         if name not in lists:
             lists[name] = []
             if args.target_dir is not None and not args.force:
-                for p in [name, name + '.' + args.format]:
+                paths = [name + '.sdb', name + '.sdb.tmp'] if args.sdb else [name, name + '.csv']
+                for p in paths:
                     if path.exists(path.join(target_dir, p)):
                         fail('"{}" already existing - use --force to ignore'.format(p))
         duration = 0
         for f in frags:
-            f['list-name'] = name
+            f['list_name'] = name
             duration += (f['end'] - f['start'])
         logging.info('Built set "{}" (samples: {}, duration: {})'.format(name,
                                                                          len(frags),
@@ -450,7 +451,7 @@ def main(args):
                                      audio_type=audio_type,
                                      processes=args.sdb_workers) if load_samples else to_samples()
         for sample in progress(samples, desc='Exporting samples', total=len(fragments)):
-            list_name = sample.meta['list-name']
+            list_name = sample.meta['list_name']
             if not dry_run:
                 sdb = lists[list_name]
                 sdb.add(sample)
@@ -465,11 +466,13 @@ def main(args):
                         for frac in sdb.finalize():
                             bar.n = int(frac * 1001)
                             bar.refresh()
-                logging.info('Writing meta file "{}"'.format(meta_path))
-                with open(meta_path, 'w') as meta_file:
-                    json.dump(sdb.meta_dict, meta_file)
+                if not args.no_meta:
+                    logging.info('Writing meta file "{}"'.format(meta_path))
+                    with open(meta_path, 'w') as meta_file:
+                        json.dump(sdb.meta_dict, meta_file, indent=4 if args.pretty else None)
             else:
-                logging.debug('Would write meta file "{}"'.format(meta_path))
+                if not args.no_meta:
+                    logging.debug('Would write meta file "{}"'.format(meta_path))
         return
 
     created_directories = {}
@@ -533,9 +536,9 @@ def main(args):
                 self.open_file.close()
 
     for audio_segment, fragment in progress(list_fragments(), desc='Exporting samples', total=len(fragments)):
-        list_name = fragment['list-name']
+        list_name = fragment['list_name']
         group_list = lists[list_name]
-        sample_path = '{}/sample-{:010d}.wav'.format(fragment['list-name'], len(group_list))
+        sample_path = '{}/sample-{:010d}.wav'.format(fragment['list_name'], len(group_list))
         with TargetFile(sample_path, "wb") as base_wav_file:
             with wave.open(base_wav_file, 'wb') as wav_file:
                 write_audio_format_to_wav_file(wav_file)
@@ -544,26 +547,17 @@ def main(args):
         group_list.append((sample_path, file_size, fragment))
 
     for list_name, group_list in progress(lists.items(), desc='Writing lists'):
-        if args.format == 'json':
-            entries = []
+        if not args.no_meta:
+            entries = {}
+            for rel_path, _, fragment in group_list:
+                entries[rel_path] = fragment
+            with TargetFile(list_name + '.meta', 'w') as meta_file:
+                json.dump(entries, meta_file, indent=4 if args.pretty else None)
+        with TargetFile(list_name + '.csv', 'w') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(['wav_filename', 'wav_filesize', 'transcript'])
             for rel_path, file_size, fragment in group_list:
-                entry = {
-                    'audio': rel_path,
-                    'size': file_size,
-                    'transcript': fragment['aligned'],
-                    'duration': fragment['end'] - fragment['start']
-                }
-                if 'aligned-raw' in fragment:
-                    entry['transcript-raw'] = fragment['aligned-raw']
-                entries.append(entry)
-            with TargetFile(list_name + '.json', 'w') as json_file:
-                json.dump(entries, json_file, indent=4 if args.pretty else None)
-        else:
-            with TargetFile(list_name + '.csv', 'w') as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(['wav_filename', 'wav_filesize', 'transcript'])
-                for rel_path, file_size, fragment in group_list:
-                    writer.writerow([rel_path, file_size, fragment['aligned']])
+                writer.writerow([rel_path, file_size, fragment['aligned']])
 
     if tar is not None:
         tar.close()
