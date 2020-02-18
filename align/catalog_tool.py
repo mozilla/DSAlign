@@ -21,7 +21,8 @@ def build_catalog():
         catalog_paths.extend(glob(source_glob))
     items = []
     for catalog_path in catalog_paths:
-        catalog_path = Path(catalog_path)
+        catalog_path = Path(catalog_path).absolute()
+        print('Loading catalog "{}"'.format(str(catalog_path)))
         if not catalog_path.is_file():
             fail('Unable to find catalog file "{}"'.format(str(catalog_path)))
         with open(catalog_path, 'r') as catalog_file:
@@ -52,9 +53,10 @@ def build_catalog():
             if CLI_ARGS.output is not None and new_item is not None and len(new_item.keys()) > 0:
                 items.append(new_item)
     if CLI_ARGS.output is not None:
-        catalog_path = CLI_ARGS.output
+        catalog_path = Path(CLI_ARGS.output).absolute()
+        print('Writing catalog "{}"'.format(str(catalog_path)))
         if CLI_ARGS.make_relative:
-            base_path = Path(catalog_path).parent.absolute()
+            base_path = catalog_path.parent
             for item in items:
                 for entry in item.keys():
                     item[entry] = str(Path(item[entry]).relative_to(base_path))
