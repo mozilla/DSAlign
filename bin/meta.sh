@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-approot="$(dirname "$(dirname "$(readlink -fm "$0")")")"
+approot=$(cd "$(dirname "$(dirname "$0")")" && pwd)
 source "$approot/venv/bin/activate"
 python "$approot/align/meta.py" "$@"
 stty sane
