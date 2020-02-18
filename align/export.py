@@ -18,7 +18,7 @@ from collections import Counter
 from multiprocessing import Pool
 from audio import DEFAULT_FORMAT, AUDIO_TYPE_PCM, AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS,\
     ensure_wav_with_format, extract_audio, change_audio_types, write_audio_format_to_wav_file
-from sample_collections import SortingSDBWriter, CollectionSample
+from sample_collections import SortingSDBWriter, LabeledSample
 from utils import MEGABYTE, parse_file_size
 
 UNKNOWN = '<UNKNOWN>'
@@ -443,7 +443,7 @@ def main(args):
 
         def to_samples():
             for pcm_data, f in list_fragments():
-                cs = CollectionSample(AUDIO_TYPE_PCM, pcm_data, f['aligned'], audio_format=audio_format)
+                cs = LabeledSample(AUDIO_TYPE_PCM, pcm_data, f['aligned'], audio_format=audio_format)
                 cs.meta = f
                 yield cs
 

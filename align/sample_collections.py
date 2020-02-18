@@ -24,7 +24,7 @@ CONTENT_TYPE_SPEECH = 'speech'
 CONTENT_TYPE_TRANSCRIPT = 'transcript'
 
 
-class CollectionSample(Sample):
+class LabeledSample(Sample):
     """In-memory sample collection sample representing an utterance.
     Derived from util.audio.Sample and used by sample collection readers and writers."""
     def __init__(self, audio_type, raw_data, transcript, audio_format=DEFAULT_FORMAT, sample_id=None):
@@ -297,7 +297,8 @@ class SDB:  # pylint: disable=too-many-instance-attributes
     def __getitem__(self, i):
         audio_data, transcript = self.read_row(i, self.speech_index, self.transcript_index)
         transcript = transcript.decode()
-        return CollectionSample(self.audio_type, audio_data, transcript, sample_id='{}:{}'.format(self.id_prefix, i))
+        sample_id = '{}:{}'.format(self.id_prefix, i)
+        return LabeledSample(self.audio_type, audio_data, transcript, sample_id=sample_id)
 
     def __iter__(self):
         for i in range(len(self.offsets)):
@@ -332,7 +333,7 @@ class CSV:
     def __getitem__(self, i):
         wav_filename, _, transcript = self.rows[i]
         with open(wav_filename, 'rb') as wav_file:
-            return CollectionSample(AUDIO_TYPE_WAV, wav_file.read(), transcript, sample_id=wav_filename)
+            return LabeledSample(AUDIO_TYPE_WAV, wav_file.read(), transcript, sample_id=wav_filename)
 
     def __iter__(self):
         for i in range(len(self.rows)):
