@@ -358,10 +358,11 @@ def align(triple):
 
 def main():
     # Debug helpers
-    logging.basicConfig(stream=sys.stdout, level=args.loglevel if args.loglevel else 20)
+    logging.basicConfig()
+    logging.root.setLevel(args.loglevel if args.loglevel else 20)
 
-    def progress(iter, **kwargs):
-        return iter if args.no_progress else tqdm(iter, **kwargs)
+    def progress(it, **kwargs):
+        return it if args.no_progress else tqdm(it, **kwargs)
 
     def resolve(base_path, spec_path):
         if spec_path is None:
@@ -501,7 +502,7 @@ def main():
             pool = multiprocessing.Pool(initializer=init_stt,
                                         initargs=(output_graph_path, lm_path, trie_path),
                                         processes=args.stt_workers)
-            transcripts = progress(pool.imap(stt, samples), desc='Transcribing', total=len(samples))
+            transcripts = list(progress(pool.imap(stt, samples), desc='Transcribing', total=len(samples)))
 
             fragments = []
             for time_start, time_end, segment_transcript in transcripts:
@@ -584,7 +585,7 @@ def parse_args():
                              help='Number of padding audio frames in VAD ring-buffer')
     audio_group.add_argument('--audio-vad-threshold', type=float, default=0.5,
                              help='VAD ring-buffer threshold for voiced frames '
-                                  '(e.g. 0.5 -> 50% of the ring-buffer frames have to be voiced '
+                                  '(e.g. 0.5 -> 50%% of the ring-buffer frames have to be voiced '
                                   'for triggering a split)')
     audio_group.add_argument('--audio-vad-frame-length', choices=[10, 20, 30], default=30,
                              help='VAD audio frame length in ms (10, 20 or 30)')
