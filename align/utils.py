@@ -34,7 +34,7 @@ def secs_to_hours(secs):
     return '%02d:%02d:%02d' % (hours, minutes, seconds)
 
 
-def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys.stdout):
+def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys.stderr):
     if total is None and hasattr(it, '__len__'):
         total = len(it)
     if total is None:
@@ -67,6 +67,7 @@ def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys
             eta = secs_to_hours(((total - global_step) / speed) if speed > 0 else 0)
             line = line_format.format(global_step, total, percent, elapsed_str, print_speed, entity, speed_unit, eta)
         print(line, file=file)
+        file.flush()
 
     for global_step, obj in enumerate(it, 1):
         interval_steps += 1
