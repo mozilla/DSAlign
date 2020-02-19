@@ -12,14 +12,13 @@ import argparse
 import statistics
 import os.path as path
 
-from tqdm import tqdm
 from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
 from audio import DEFAULT_FORMAT, AUDIO_TYPE_PCM, AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS,\
     ensure_wav_with_format, extract_audio, change_audio_types, write_audio_format_to_wav_file
 from sample_collections import SortingSDBWriter, LabeledSample
-from utils import MEGABYTE, parse_file_size
+from utils import parse_file_size, log_progress
 
 UNKNOWN = '<UNKNOWN>'
 AUDIO_TYPE_LOOKUP = {
@@ -164,7 +163,9 @@ def main(args):
     parser.add_argument('--loglevel', type=int, default=20,
                         help='Log level (between 0 and 50) - default: 20')
     parser.add_argument('--no-progress', action="store_true",
-                        help='Prevents showing progress bars')
+                        help='Prevents showing progress indication')
+    parser.add_argument('--progress-interval', type=float, default=1.0,
+                        help='Progress indication interval in seconds')
 
     args = parser.parse_args()
 
@@ -187,11 +188,8 @@ def main(args):
     logging.getLogger('sox').setLevel(logging.ERROR)
 
     def progress(it=None, desc='Processing', total=None):
-        if args.no_progress:
-            logging.info(desc)
-            return it
-        else:
-            return tqdm(it, desc=desc.rjust(30), total=total, ncols=120)
+        logging.info(desc)
+        return it if args.no_progress else log_progress(it, interval=args.progress_interval, total=total)
 
     logging.debug("Start")
 
@@ -286,7 +284,7 @@ def main(args):
             logging.info('Filtered out {} samples'.format(len(fragments) - len(kept_fragments)))
         fragments = kept_fragments
         if len(fragments) == 0:
-            fail('Filter left no samples samples')
+            fail('Filter left no samples to export')
 
     for fragment in progress(fragments, desc='Computing qualities'):
         fragment['quality'] = eval(args.criteria, {'math': math}, fragment)
@@ -420,9 +418,14 @@ def main(args):
                 with wave.open(converted_path, 'rb') as source_wav_file:
                     duration = source_wav_file.getframerate() * source_wav_file.getnframes() * 1000
                     for fragment in file_fragments:
-                        start, end = fragment['start'], fragment['end']
-                        assert start < end <= duration
-                        yield extract_audio(source_wav_file, start / 1000.0, end / 1000.0), fragment
+                        try:
+                            start, end = fragment['start'], fragment['end']
+                            assert start < end <= duration
+                            fragment_audio = extract_audio(source_wav_file, start / 1000.0, end / 1000.0)
+                        except Exception as ae:
+                            raise RuntimeError('Problem getting audio for fragment\n{}"'
+                                               .format(json.dumps(fragment, indent=4))) from ae
+                        yield fragment_audio, fragment
                 if original_path != converted_path:
                     os.remove(converted_path)
             else:
@@ -450,22 +453,18 @@ def main(args):
         samples = change_audio_types(to_samples(),
                                      audio_type=audio_type,
                                      processes=args.sdb_workers) if load_samples else to_samples()
+        set_counter = Counter()
         for sample in progress(samples, desc='Exporting samples', total=len(fragments)):
             list_name = sample.meta['list_name']
             if not dry_run:
+                set_counter[list_name] += 1
                 sdb = lists[list_name]
                 sdb.add(sample)
         for list_name, sdb in lists.items():
             meta_path = os.path.join(target_dir, list_name + '.meta')
             if not dry_run:
-                if args.no_progress:
-                    logging.info('Finalizing {}'.format(list_name))
-                    sdb.close()
-                else:
-                    with progress(desc='Finalizing {}'.format(list_name), total=1000) as bar:
-                        for frac in sdb.finalize():
-                            bar.n = int(frac * 1001)
-                            bar.refresh()
+                for _ in progress(sdb.finalize(), desc='Finalizing {}'.format(list_name), total=set_counter[list_name]):
+                    pass
                 if not args.no_meta:
                     logging.info('Writing meta file "{}"'.format(meta_path))
                     with open(meta_path, 'w') as meta_file:

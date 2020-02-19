@@ -1,6 +1,8 @@
 
 import os
+import sys
 import time
+
 from multiprocessing.dummy import Pool as ThreadPool
 
 KILO = 1024
@@ -24,6 +26,59 @@ def parse_file_size(file_size):
 
 def keep_only_digits(txt):
     return ''.join(filter(str.isdigit, txt))
+
+
+def secs_to_hours(secs):
+    hours, remainder = divmod(secs, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return '%02d:%02d:%02d' % (hours, minutes, seconds)
+
+
+def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys.stdout):
+    if total is None and hasattr(it, '__len__'):
+        total = len(it)
+    if total is None:
+        line_format = ' {:8d} (elapsed: {}, speed: {:.2f} {}/{})'
+    else:
+        line_format = ' {:' + str(len(str(total))) + 'd} of {} : {:6.2f}% (elapsed: {}, speed: {:.2f} {}/{}, ETA: {})'
+
+    overall_start = time.time()
+    interval_start = overall_start
+    interval_steps = 0
+
+    def print_interval(steps, time_now):
+        elapsed = time_now - overall_start
+        elapsed_str = secs_to_hours(elapsed)
+        speed_unit = 's'
+        print_speed = speed = interval_steps / interval_duration
+        if print_speed < 0.1:
+            print_speed = print_speed * 60
+            speed_unit = 'm'
+            if print_speed < 1:
+                print_speed = print_speed * 60
+                speed_unit = 'h'
+        elif print_speed > 1000:
+            print_speed = print_speed / 1000.0
+            speed_unit = 'ms'
+        if total is None:
+            line = line_format.format(global_step, elapsed_str, print_speed, entity, speed_unit)
+        else:
+            percent = global_step * 100.0 / total
+            eta = secs_to_hours(((total - global_step) / speed) if speed > 0 else 0)
+            line = line_format.format(global_step, total, percent, elapsed_str, print_speed, entity, speed_unit, eta)
+        print(line, file=file)
+
+    for global_step, obj in enumerate(it, 1):
+        interval_steps += 1
+        yield obj
+        t = time.time()
+        interval_duration = t - interval_start
+        if (step is None and interval_duration > interval) or (step is not None and interval_steps >= step):
+            print_interval(interval_steps, t)
+            interval_steps = 0
+            interval_start = t
+    if interval_steps > 0:
+        print_interval(interval_steps, time.time())
 
 
 def circulate(items, center=None):

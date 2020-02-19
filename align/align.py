@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import logging
 import argparse
@@ -12,7 +11,6 @@ import multiprocessing
 from collections import Counter
 from search import FuzzySearch
 from glob import glob
-from tqdm import tqdm
 from text import Alphabet, TextCleaner, levenshtein, similarity
 from utils import enweight
 from audio import DEFAULT_RATE, read_frames_from_file, vad_split
@@ -361,8 +359,9 @@ def main():
     logging.basicConfig()
     logging.root.setLevel(args.loglevel if args.loglevel else 20)
 
-    def progress(it, **kwargs):
-        return it if args.no_progress else tqdm(it, **kwargs)
+    def progress(it=None, desc='Processing', total=None):
+        logging.info(desc)
+        return it if args.no_progress else log_progress(it, interval=args.progress_interval, total=total)
 
     def resolve(base_path, spec_path):
         if spec_path is None:
@@ -566,7 +565,9 @@ def parse_args():
     parser.add_argument('--loglevel', type=int, required=False, default=20,
                         help='Log level (between 0 and 50) - default: 20')
     parser.add_argument('--no-progress', action="store_true",
-                        help='Prevents showing progress bars')
+                        help='Prevents showing progress indication')
+    parser.add_argument('--progress-interval', type=float, default=1.0,
+                        help='Progress indication interval in seconds')
     parser.add_argument('--play', action="store_true",
                         help='Play audio fragments as they are matched using SoX audio tool')
     parser.add_argument('--text-context', type=int, required=False, default=10,

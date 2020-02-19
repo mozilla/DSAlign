@@ -13,8 +13,7 @@ sys.path.insert(1, os.path.join(sys.path[0], '..'))
 
 import argparse
 
-from tqdm import tqdm
-from utils import parse_file_size
+from utils import parse_file_size, log_progress
 from audio import change_audio_types, AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS
 from sample_collections import samples_from_files, DirectSDBWriter, SortingSDBWriter
 
@@ -24,9 +23,9 @@ AUDIO_TYPE_LOOKUP = {
 }
 
 
-def progress(it, desc='Processing', total=None):
-    desc = desc.rjust(24)
-    return iter if CLI_ARGS.no_progress else tqdm(it, desc=desc, total=total, ncols=120)
+def progress(it=None, desc='Processing', total=None):
+    print(desc)
+    return it if CLI_ARGS.no_progress else log_progress(it, interval=CLI_ARGS.progress_interval, total=total)
 
 
 def add_samples(sdb_writer):
@@ -60,7 +59,8 @@ def handle_args():
                                                               'for sorting through --sort option')
     parser.add_argument('--sort-cache-size', default='1GB', help='Cache (bucket) size for binary audio data '
                                                                  'for sorting through --sort option')
-    parser.add_argument('--no-progress', action='store_true', help='No progress bar')
+    parser.add_argument('--no-progress', action="store_true", help='Prevents showing progress indication')
+    parser.add_argument('--progress-interval', type=float, default=1.0, help='Progress indication interval in seconds')
     parser.add_argument('sources', nargs='+', help='Source CSV and/or SDB files')
     parser.add_argument('target', help='SDB file to create')
     return parser.parse_args()
