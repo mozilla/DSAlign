@@ -136,6 +136,8 @@ def main(args):
                         help='Memory bucket size for external sorting of SDBs')
     parser.add_argument('--sdb-workers', type=int, default=None,
                         help='Number of SDB encoding workers')
+    parser.add_argument('--sdb-buffered-samples', type=int, default=None,
+                        help='Number of samples per bucket buffer during finalization')
     parser.add_argument('--sdb-audio-type', default='opus', choices=AUDIO_TYPE_LOOKUP.keys(),
                         help='Audio representation inside target SDBs')
     parser.add_argument('--buffer', default='1MB',
@@ -444,7 +446,8 @@ def main(args):
                 lists[list_name] = SortingSDBWriter(sdb_path,
                                                     audio_type=audio_type,
                                                     buffering=args.buffer,
-                                                    cache_size=args.sdb_bucket_size)
+                                                    cache_size=args.sdb_bucket_size,
+                                                    buffered_samples=args.sdb_buffered_samples)
 
         def to_samples():
             for pcm_data, f in list_fragments():

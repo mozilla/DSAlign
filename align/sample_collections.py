@@ -126,6 +126,7 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
                  cache_size=CACHE_SIZE,
                  buffering=BUFFER_SIZE,
                  audio_type=AUDIO_TYPE_OPUS,
+                 buffered_samples=None,
                  id_prefix=None):
         self.sdb_filename = sdb_filename
         self.id_prefix = sdb_filename if id_prefix is None else id_prefix
@@ -134,6 +135,7 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
         if audio_type not in SERIALIZABLE_AUDIO_TYPES:
             raise ValueError('Audio type "{}" not supported'.format(audio_type))
         self.audio_type = audio_type
+        self.buffered_samples = buffered_samples
         self.tmp_sdb = DirectSDBWriter(self.tmp_sdb_filename,
                                        buffering=buffering,
                                        audio_type=audio_type,
@@ -181,9 +183,12 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
         num_samples = len(self.tmp_sdb)
         self.tmp_sdb.close()
         self.tmp_sdb = None
-        avg_sample_size = self.overall_size / num_samples
-        max_cached_samples = self.cache_size / avg_sample_size
-        buffer_size = max(1, int(max_cached_samples / len(self.buckets)))
+        if self.buffered_samples is None:
+            avg_sample_size = self.overall_size / num_samples
+            max_cached_samples = self.cache_size / avg_sample_size
+            buffer_size = max(1, int(max_cached_samples / len(self.buckets)))
+        else:
+            buffer_size = self.buffered_samples
         sdb_reader = SDB(self.tmp_sdb_filename, buffering=self.buffering, id_prefix='#pre-sorted')
 
         def buffered_view(bucket):
