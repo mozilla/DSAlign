@@ -50,7 +50,8 @@ def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys
         elapsed = time_now - overall_start
         elapsed_str = secs_to_hours(elapsed)
         speed_unit = 's'
-        print_speed = speed = interval_steps / interval_duration
+        interval_duration = time_now - interval_start
+        print_speed = speed = interval_steps / (0.001 if interval_duration == 0.0 else interval_duration)
         if print_speed < 0.1:
             print_speed = print_speed * 60
             speed_unit = 'm'
@@ -73,8 +74,7 @@ def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys
         interval_steps += 1
         yield obj
         t = time.time()
-        interval_duration = t - interval_start
-        if (step is None and interval_duration > interval) or (step is not None and interval_steps >= step):
+        if (step is None and t - interval_start > interval) or (step is not None and interval_steps >= step):
             print_interval(interval_steps, t)
             interval_steps = 0
             interval_start = t
