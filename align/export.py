@@ -289,16 +289,17 @@ def main(args):
     for fragment in progress(fragments, desc='Computing qualities'):
         fragment['quality'] = eval(args.criteria, {'math': math}, fragment)
 
-    def get_meta_field(f, meta_field):
+    def get_meta_list(f, meta_field):
         if 'meta' in f:
             meta_fields = f['meta']
             if isinstance(meta_fields, dict) and meta_field in meta_fields:
-                return meta_fields[meta_field]
+                meta_field = meta_fields[meta_field]
+                return meta_field if isinstance(meta_field, list) else [meta_field]
         return []
 
     def get_first_meta(f, meta_field):
-        metas = get_meta_field(f, meta_field)
-        return metas[0] if metas else UNKNOWN
+        meta_field = get_meta_list(f, meta_field)
+        return meta_field[0] if meta_field else UNKNOWN
 
     if args.debias is not None:
         for debias in args.debias:
@@ -353,9 +354,9 @@ def main(args):
 
     if args.split and args.split_field:
         if args.split_drop_multiple:
-            fragments = filter(lambda f: len(get_meta_field(f, args.split_field)) < 2, fragments)
+            fragments = filter(lambda f: len(get_meta_list(f, args.split_field)) < 2, fragments)
         if args.split_drop_unknown:
-            fragments = filter(lambda f: len(get_meta_field(f, args.split_field)) > 0, fragments)
+            fragments = filter(lambda f: len(get_meta_list(f, args.split_field)) > 0, fragments)
         fragments = list(fragments)
         metas = engroup(fragments, lambda f: get_first_meta(f, args.split_field)).items()
         metas = sorted(metas, key=lambda meta_frags: len(meta_frags[1]))
