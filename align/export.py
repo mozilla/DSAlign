@@ -71,7 +71,7 @@ def load_segment(audio_path):
 
 def load_segment_dry(audio_path):
     if path.isfile(audio_path):
-        logging.debug('Would load file "{}"'.format(audio_path))
+        logging.info('Would load file "{}"'.format(audio_path))
     else:
         fail('File not found: "{}"'.format(audio_path))
     return audio_path, audio_path
@@ -437,8 +437,9 @@ def main(args):
         for list_name in lists.keys():
             sdb_path = os.path.join(target_dir, list_name + '.sdb')
             if dry_run:
-                logging.debug('Would create SDB "{}"'.format(sdb_path))
+                logging.info('Would create SDB "{}"'.format(sdb_path))
             else:
+                logging.info('Creating SDB "{}"'.format(sdb_path))
                 lists[list_name] = SortingSDBWriter(sdb_path,
                                                     audio_type=audio_type,
                                                     buffering=args.buffer,
@@ -471,14 +472,14 @@ def main(args):
                         json.dump(sdb.meta_dict, meta_file, indent=4 if args.pretty else None)
             else:
                 if not args.no_meta:
-                    logging.debug('Would write meta file "{}"'.format(meta_path))
+                    logging.info('Would write meta file "{}"'.format(meta_path))
         return
 
     created_directories = {}
     tar = None
     if target_tar is not None:
         if dry_run:
-            logging.debug('Would create tar-file "{}"'.format(target_tar))
+            logging.info('Would create tar-file "{}"'.format(target_tar))
         else:
             base_tar = open(target_tar, 'wb', buffering=args.buffer)
             tar = tarfile.open(fileobj=base_tar, mode='w')
@@ -499,7 +500,7 @@ def main(args):
                         dir_path = path.join(*dirs[:i + 1])
                         if not path.isdir(dir_path):
                             if dry_run:
-                                logging.debug('Would create directory "{}"'.format(dir_path))
+                                logging.info('Would create directory "{}"'.format(dir_path))
                             else:
                                 os.mkdir(dir_path)
                     else:
@@ -510,7 +511,7 @@ def main(args):
             if target_tar is None:
                 file_path = path.join(target_dir, *self.data_path.split('/'))
                 if dry_run:
-                    logging.debug('Would write file "{}"'.format(file_path))
+                    logging.info('Would write file "{}"'.format(file_path))
                     self.open_file = io.BytesIO() if 'b' in self.mode else io.StringIO()
                 else:
                     self.open_file = open(file_path, self.mode)
