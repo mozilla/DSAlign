@@ -12,7 +12,7 @@ from collections import Counter
 from search import FuzzySearch
 from glob import glob
 from text import Alphabet, TextCleaner, levenshtein, similarity
-from utils import enweight
+from utils import enweight, log_progress
 from audio import DEFAULT_RATE, read_frames_from_file, vad_split
 
 BEAM_WIDTH = 500
