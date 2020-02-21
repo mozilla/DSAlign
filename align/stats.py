@@ -6,7 +6,7 @@ from os import path
 from pickle import load, dump
 from collections import Counter
 from datetime import timedelta
-from tqdm import tqdm
+from utils import log_progress
 
 
 def fail(message, code=1):
@@ -129,9 +129,9 @@ def main(args):
 
     args = parser.parse_args()
 
-    def progress(lst, desc='Processing', total=None):
-        desc = desc.rjust(24)
-        return lst if args.no_progress else tqdm(lst, desc=desc, total=total, ncols=120)
+    def progress(it=None, desc='Processing', total=None):
+        print(desc)
+        return it if args.no_progress else log_progress(it, interval=args.progress_interval, total=total)
     AlignmentStatistics.progress = progress
 
     if args.cache is not None and path.exists(args.cache):
