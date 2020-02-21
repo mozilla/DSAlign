@@ -14,10 +14,10 @@ DEFAULT_CHANNELS = 1
 DEFAULT_WIDTH = 2
 DEFAULT_FORMAT = (DEFAULT_RATE, DEFAULT_CHANNELS, DEFAULT_WIDTH)
 
-AUDIO_TYPE_NP = 'application/x-np'
-AUDIO_TYPE_PCM = 'application/x-pcm'
+AUDIO_TYPE_NP = 'application/vnd.mozilla.np'
+AUDIO_TYPE_PCM = 'application/vnd.mozilla.pcm'
 AUDIO_TYPE_WAV = 'audio/wav'
-AUDIO_TYPE_OPUS = 'application/x-opus'
+AUDIO_TYPE_OPUS = 'application/vnd.mozilla.opus'
 SERIALIZABLE_AUDIO_TYPES = [AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS]
 
 OPUS_PCM_LEN_SIZE = 4
@@ -276,6 +276,7 @@ def write_opus(opus_file, audio_format, audio_data):
     opus_file.write(pack_number(width, OPUS_WIDTH_SIZE))
     for i in range(0, len(audio_data), chunk_size):
         chunk = audio_data[i:i + chunk_size]
+        # Preventing non-deterministic encoding results from uninitialized remainder of the encoder buffer
         if len(chunk) < chunk_size:
             chunk = chunk + bytearray(chunk_size - len(chunk))
         encoded = encoder.encode(chunk, frame_size)
