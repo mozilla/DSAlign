@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import heapq
 
 from multiprocessing.dummy import Pool as ThreadPool
 
@@ -144,36 +145,19 @@ def greedy_minimum_search(a, b, compute, result_a=None, result_b=None):
 
 
 class Interleaved:
-    """Iterable that combines other iterables in interleaving fashion: During iteration the next element is always
-    picked (respecting element sort-order) from the current top elements of the connected iterables."""
+    """Collection that lazily combines sorted collections in an interleaving fashion.
+    During iteration the next smallest element from all the sorted collections is always picked.
+    The collections must support iter() and len()."""
     def __init__(self, *iterables, key=lambda obj: obj):
         self.iterables = iterables
         self.key = key
+        self.len = sum(map(len, iterables))
 
     def __iter__(self):
-        firsts = []
-        for iterable in self.iterables:
-            try:
-                it = iter(iterable)
-            except TypeError:
-                it = iterable
-            try:
-                first = next(it)
-                firsts.append((it, first))
-            except StopIteration:
-                continue
-        while len(firsts) > 0:
-            firsts.sort(key=lambda it_first: self.key(it_first[1]))
-            it, first = firsts.pop(0)
-            yield first
-            try:
-                first = next(it)
-            except StopIteration:
-                continue
-            firsts.append((it, first))
+        return heapq.merge(*self.iterables, key=self.key)
 
     def __len__(self):
-        return sum(map(len, self.iterables))
+        return self.len
 
 
 class LimitingPool:

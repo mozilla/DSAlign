@@ -2,6 +2,7 @@
 import os
 import csv
 import json
+import heapq
 
 from pathlib import Path
 from functools import partial
@@ -203,7 +204,7 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
                     yield buffer.pop(-1)
 
         bucket_views = list(map(buffered_view, self.buckets))
-        interleaved = Interleaved(*bucket_views, key=lambda s: s.duration)
+        interleaved = heapq.merge(*bucket_views, key=lambda s: s.duration)
         with DirectSDBWriter(self.sdb_filename,
                              buffering=self.buffering,
                              audio_type=self.audio_type,
