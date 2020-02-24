@@ -15,7 +15,7 @@ import os.path as path
 from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
-from audio import DEFAULT_FORMAT, AUDIO_TYPE_PCM, AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS,\
+from audio import AUDIO_TYPE_PCM, AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS,\
     ensure_wav_with_format, extract_audio, change_audio_types, write_audio_format_to_wav_file
 from sample_collections import SortingSDBWriter, LabeledSample
 from utils import parse_file_size, log_progress
@@ -26,8 +26,6 @@ AUDIO_TYPE_LOOKUP = {
     'opus': AUDIO_TYPE_OPUS
 }
 SET_NAMES = ['train', 'dev', 'test']
-
-audio_format = DEFAULT_FORMAT
 
 
 def fail(message, code=1):
@@ -77,8 +75,7 @@ def load_segment_dry(audio_path):
     return audio_path, audio_path
 
 
-def main(args):
-    global audio_format
+def parse_args():
     parser = argparse.ArgumentParser(description='Export aligned speech samples.')
 
     parser.add_argument('--audio', type=str,
@@ -173,12 +170,15 @@ def main(args):
 
     args.buffer = parse_file_size(args.buffer)
     args.sdb_bucket_size = parse_file_size(args.sdb_bucket_size)
-
+    return args
+    
+    
+def main():
     set_assignments = {}
     for set_index, set_name in enumerate(SET_NAMES):
         attr_name = 'assign_' + set_name
-        if hasattr(args, attr_name):
-            set_entities = getattr(args, attr_name)
+        if hasattr(CLI_ARGS, attr_name):
+            set_entities = getattr(CLI_ARGS, attr_name)
             if set_entities is not None:
                 for entity_id in str(set_entities).split(','):
                     if entity_id in set_assignments:
@@ -186,12 +186,12 @@ def main(args):
                              .format(entity_id, set_name, SET_NAMES[set_assignments[entity_id]]))
                     set_assignments[entity_id] = set_index
 
-    logging.basicConfig(stream=sys.stderr, level=args.loglevel if args.loglevel else 20)
+    logging.basicConfig(stream=sys.stderr, level=CLI_ARGS.loglevel if CLI_ARGS.loglevel else 20)
     logging.getLogger('sox').setLevel(logging.ERROR)
 
     def progress(it=None, desc='Processing', total=None):
         logging.info(desc)
-        return it if args.no_progress else log_progress(it, interval=args.progress_interval, total=total)
+        return it if CLI_ARGS.no_progress else log_progress(it, interval=CLI_ARGS.progress_interval, total=total)
 
     logging.debug("Start")
 
@@ -209,16 +209,16 @@ def main(args):
         return spec_path if path.isfile(spec_path) else None
 
     target_dir = target_tar = None
-    if args.target_dir is not None and args.target_tar is not None:
+    if CLI_ARGS.target_dir is not None and CLI_ARGS.target_tar is not None:
         fail('Only one allowed: --target-dir or --target-tar')
-    elif args.target_dir is not None:
-        target_dir = check_path(args.target_dir, fs_type='directory')
-    elif args.target_tar is not None:
-        if args.sdb:
+    elif CLI_ARGS.target_dir is not None:
+        target_dir = check_path(CLI_ARGS.target_dir, fs_type='directory')
+    elif CLI_ARGS.target_tar is not None:
+        if CLI_ARGS.sdb:
             fail('Option --sdb not supported for --target-tar output. Use --target-dir instead.')
-        target_tar = path.abspath(args.target_tar)
+        target_tar = path.abspath(CLI_ARGS.target_tar)
         if path.isfile(target_tar):
-            if not args.force:
+            if not CLI_ARGS.force:
                 fail('Target tar-file already existing - use --force to overwrite')
         elif path.exists(target_tar):
             fail('Target tar-file path is existing, but not a file')
@@ -227,15 +227,15 @@ def main(args):
     else:
         fail('Either --target-dir or --target-tar has to be provided')
 
-    if args.audio:
-        if args.aligned:
-            pairs.append((check_path(args.audio), check_path(args.aligned)))
+    if CLI_ARGS.audio:
+        if CLI_ARGS.aligned:
+            pairs.append((check_path(CLI_ARGS.audio), check_path(CLI_ARGS.aligned)))
         else:
             fail('If you specify "--audio", you also have to specify "--aligned"')
-    elif args.aligned:
+    elif CLI_ARGS.aligned:
         fail('If you specify "--aligned", you also have to specify "--audio"')
-    elif args.catalog:
-        catalog = check_path(args.catalog)
+    elif CLI_ARGS.catalog:
+        catalog = check_path(CLI_ARGS.catalog)
         catalog_dir = path.dirname(catalog)
         with open(catalog, 'r') as catalog_file:
             catalog_entries = json.load(catalog_file)
@@ -243,26 +243,24 @@ def main(args):
             audio = make_absolute(catalog_dir, entry['audio'])
             aligned = make_absolute(catalog_dir, entry['aligned'])
             if audio is None or aligned is None:
-                if args.ignore_missing:
+                if CLI_ARGS.ignore_missing:
                     continue
                 if audio is None:
                     fail('Problem loading catalog "{}": Missing referenced audio file "{}"'
-                         .format(args.catalog, entry['audio']))
+                         .format(CLI_ARGS.catalog, entry['audio']))
                 if aligned is None:
                     fail('Problem loading catalog "{}": Missing referenced alignment file "{}"'
-                         .format(args.catalog, entry['aligned']))
+                         .format(CLI_ARGS.catalog, entry['aligned']))
             pairs.append((audio, aligned))
     else:
         fail('You have to either specify "--audio" and "--aligned" or "--catalog"')
 
-    dry_run = args.dry_run or args.dry_run_fast
-    load_samples = not args.dry_run_fast
-
-    audio_format = (args.rate, args.channels, args.width)
+    dry_run = CLI_ARGS.dry_run or CLI_ARGS.dry_run_fast
+    load_samples = not CLI_ARGS.dry_run_fast
 
     partition_specs = []
-    if args.partition is not None:
-        for partition_expr in args.partition:
+    if CLI_ARGS.partition is not None:
+        for partition_expr in CLI_ARGS.partition:
             parts = partition_expr.split(':')
             if len(parts) != 2:
                 fail('Wrong partition specification: "{}"'.format(partition_expr))
@@ -277,10 +275,10 @@ def main(args):
             fragment['audio_path'] = audio_path
             fragments.append(fragment)
 
-    if args.filter is not None:
+    if CLI_ARGS.filter is not None:
         kept_fragments = []
         for fragment in progress(fragments, desc='Filtering'):
-            if not eval(args.filter, {'math': math}, fragment):
+            if not eval(CLI_ARGS.filter, {'math': math}, fragment):
                 kept_fragments.append(fragment)
         if len(kept_fragments) < len(fragments):
             logging.info('Filtered out {} samples'.format(len(fragments) - len(kept_fragments)))
@@ -289,7 +287,7 @@ def main(args):
             fail('Filter left no samples to export')
 
     for fragment in progress(fragments, desc='Computing qualities'):
-        fragment['quality'] = eval(args.criteria, {'math': math}, fragment)
+        fragment['quality'] = eval(CLI_ARGS.criteria, {'math': math}, fragment)
 
     def get_meta_list(f, meta_field):
         if 'meta' in f:
@@ -303,8 +301,8 @@ def main(args):
         meta_field = get_meta_list(f, meta_field)
         return meta_field[0] if meta_field else UNKNOWN
 
-    if args.debias is not None:
-        for debias in args.debias:
+    if CLI_ARGS.debias is not None:
+        for debias in CLI_ARGS.debias:
             grouped = engroup(fragments, lambda f: get_first_meta(f, debias))
             if UNKNOWN in grouped:
                 fragments = grouped[UNKNOWN]
@@ -314,7 +312,7 @@ def main(args):
             counts = list(map(lambda f: len(f), grouped.values()))
             mean = statistics.mean(counts)
             sigma = statistics.pstdev(counts, mu=mean)
-            cap = int(mean + args.debias_sigma_factor * sigma)
+            cap = int(mean + CLI_ARGS.debias_sigma_factor * sigma)
             counter = Counter()
             for group, values in progress(grouped.items(), desc='Debiasing "{}"'.format(debias)):
                 if len(values) > cap:
@@ -338,8 +336,8 @@ def main(args):
     def assign_fragments(frags, name):
         if name not in lists:
             lists[name] = []
-            if args.target_dir is not None and not args.force:
-                paths = [name + '.sdb', name + '.sdb.tmp'] if args.sdb else [name, name + '.csv']
+            if CLI_ARGS.target_dir is not None and not CLI_ARGS.force:
+                paths = [name + '.sdb', name + '.sdb.tmp'] if CLI_ARGS.sdb else [name, name + '.csv']
                 for p in paths:
                     if path.exists(path.join(target_dir, p)):
                         fail('"{}" already existing - use --force to ignore'.format(p))
@@ -351,22 +349,22 @@ def main(args):
                                                                          len(frags),
                                                                          timedelta(milliseconds=duration)))
 
-    if args.split_seed is not None:
-        random.seed(args.split_seed)
+    if CLI_ARGS.split_seed is not None:
+        random.seed(CLI_ARGS.split_seed)
 
-    if args.split and args.split_field:
-        if args.split_drop_multiple:
-            fragments = filter(lambda f: len(get_meta_list(f, args.split_field)) < 2, fragments)
-        if args.split_drop_unknown:
-            fragments = filter(lambda f: len(get_meta_list(f, args.split_field)) > 0, fragments)
+    if CLI_ARGS.split and CLI_ARGS.split_field:
+        if CLI_ARGS.split_drop_multiple:
+            fragments = filter(lambda f: len(get_meta_list(f, CLI_ARGS.split_field)) < 2, fragments)
+        if CLI_ARGS.split_drop_unknown:
+            fragments = filter(lambda f: len(get_meta_list(f, CLI_ARGS.split_field)) > 0, fragments)
         fragments = list(fragments)
-        metas = engroup(fragments, lambda f: get_first_meta(f, args.split_field)).items()
+        metas = engroup(fragments, lambda f: get_first_meta(f, CLI_ARGS.split_field)).items()
         metas = sorted(metas, key=lambda meta_frags: len(meta_frags[1]))
         metas = list(map(lambda meta_frags: meta_frags[0], metas))
         partitions = engroup(fragments, get_partition)
         partitions = list(map(lambda part_frags: (part_frags[0],
                                                   get_sample_size(len(part_frags[1])),
-                                                  engroup(part_frags[1], lambda pf: get_first_meta(pf, args.split_field)),
+                                                  engroup(part_frags[1], lambda pf: get_first_meta(pf, CLI_ARGS.split_field)),
                                                   [[], [], []]),
                               partitions.items()))
         remaining_metas = []
@@ -397,7 +395,7 @@ def main(args):
     else:
         partitions = engroup(fragments, get_partition)
         for partition, partition_fragments in partitions.items():
-            if args.split:
+            if CLI_ARGS.split:
                 sample_size = get_sample_size(len(partition_fragments))
                 random.shuffle(partition_fragments)
                 test_set = partition_fragments[:sample_size]
@@ -412,7 +410,7 @@ def main(args):
 
     def list_fragments():
         audio_files = engroup(fragments, lambda f: f['audio_path'])
-        pool = Pool(args.workers)
+        pool = Pool(CLI_ARGS.workers)
         ls = load_segment if load_samples else load_segment_dry
         for original_path, converted_path in pool.imap_unordered(ls, audio_files.keys()):
             file_fragments = audio_files[original_path]
@@ -435,8 +433,8 @@ def main(args):
                 for fragment in file_fragments:
                     yield b'', fragment
 
-    if args.sdb:
-        audio_type = AUDIO_TYPE_LOOKUP[args.sdb_audio_type]
+    if CLI_ARGS.sdb:
+        audio_type = AUDIO_TYPE_LOOKUP[CLI_ARGS.sdb_audio_type]
         for list_name in lists.keys():
             sdb_path = os.path.join(target_dir, list_name + '.sdb')
             if dry_run:
@@ -445,9 +443,9 @@ def main(args):
                 logging.info('Creating SDB "{}"'.format(sdb_path))
                 lists[list_name] = SortingSDBWriter(sdb_path,
                                                     audio_type=audio_type,
-                                                    buffering=args.buffer,
-                                                    cache_size=args.sdb_bucket_size,
-                                                    buffered_samples=args.sdb_buffered_samples)
+                                                    buffering=CLI_ARGS.buffer,
+                                                    cache_size=CLI_ARGS.sdb_bucket_size,
+                                                    buffered_samples=CLI_ARGS.sdb_buffered_samples)
 
         def to_samples():
             for pcm_data, f in list_fragments():
@@ -457,7 +455,7 @@ def main(args):
 
         samples = change_audio_types(to_samples(),
                                      audio_type=audio_type,
-                                     processes=args.sdb_workers) if load_samples else to_samples()
+                                     processes=CLI_ARGS.sdb_workers) if load_samples else to_samples()
         set_counter = Counter()
         for sample in progress(samples, desc='Exporting samples', total=len(fragments)):
             list_name = sample.meta['list_name']
@@ -470,12 +468,12 @@ def main(args):
             if not dry_run:
                 for _ in progress(sdb.finalize(), desc='Finalizing {}'.format(list_name), total=set_counter[list_name]):
                     pass
-                if not args.no_meta:
+                if not CLI_ARGS.no_meta:
                     logging.info('Writing meta file "{}"'.format(meta_path))
                     with open(meta_path, 'w') as meta_file:
-                        json.dump(sdb.meta_dict, meta_file, indent=4 if args.pretty else None)
+                        json.dump(sdb.meta_dict, meta_file, indent=4 if CLI_ARGS.pretty else None)
             else:
-                if not args.no_meta:
+                if not CLI_ARGS.no_meta:
                     logging.info('Would write meta file "{}"'.format(meta_path))
         return
 
@@ -485,7 +483,7 @@ def main(args):
         if dry_run:
             logging.info('Would create tar-file "{}"'.format(target_tar))
         else:
-            base_tar = open(target_tar, 'wb', buffering=args.buffer)
+            base_tar = open(target_tar, 'wb', buffering=CLI_ARGS.buffer)
             tar = tarfile.open(fileobj=base_tar, mode='w')
 
     class TargetFile:
@@ -551,12 +549,12 @@ def main(args):
         group_list.append((sample_path, file_size, fragment))
 
     for list_name, group_list in progress(lists.items(), desc='Writing lists'):
-        if not args.no_meta:
+        if not CLI_ARGS.no_meta:
             entries = {}
             for rel_path, _, fragment in group_list:
                 entries[rel_path] = fragment
             with TargetFile(list_name + '.meta', 'w') as meta_file:
-                json.dump(entries, meta_file, indent=4 if args.pretty else None)
+                json.dump(entries, meta_file, indent=4 if CLI_ARGS.pretty else None)
         with TargetFile(list_name + '.csv', 'w') as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow(['wav_filename', 'wav_filesize', 'transcript'])
@@ -568,4 +566,6 @@ def main(args):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    CLI_ARGS = parse_args()
+    audio_format = (CLI_ARGS.rate, CLI_ARGS.channels, CLI_ARGS.width)
+    main()
