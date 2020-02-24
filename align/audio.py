@@ -134,12 +134,12 @@ def convert_audio(src_audio_path, dst_audio_path, file_type=None, audio_format=D
     transformer.build(src_audio_path, dst_audio_path)
 
 
-def ensure_wav_with_format(src_audio_path, audio_format=DEFAULT_FORMAT):
+def ensure_wav_with_format(src_audio_path, audio_format=DEFAULT_FORMAT, tmp_dir=None):
     if src_audio_path.endswith('.wav'):
         with wave.open(src_audio_path, 'r') as src_audio_file:
             if read_audio_format_from_wav_file(src_audio_file) == audio_format:
                 return src_audio_path, False
-    fd, tmp_file_path = tempfile.mkstemp(suffix='.wav')
+    fd, tmp_file_path = tempfile.mkstemp(suffix='.wav', dir=tmp_dir)
     os.close(fd)
     convert_audio(src_audio_path, tmp_file_path, file_type='wav', audio_format=audio_format)
     return tmp_file_path, True

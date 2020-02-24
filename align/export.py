@@ -28,9 +28,38 @@ AUDIO_TYPE_LOOKUP = {
 SET_NAMES = ['train', 'dev', 'test']
 
 
+class Fragment:
+    def __init__(self, catalog_index, alignment_index, quality=0, duration=0):
+        self.catalog_index = catalog_index
+        self.alignment_index = alignment_index
+        self.quality = quality
+        self.duration = duration
+        self.meta = {}
+        self.partition = 'other'
+        self.list_name = 'other'
+
+
+def progress(it=None, desc='Processing', total=None):
+    logging.info(desc)
+    return it if CLI_ARGS.no_progress else log_progress(it, interval=CLI_ARGS.progress_interval, total=total)
+
+
 def fail(message, code=1):
     logging.fatal(message)
     exit(code)
+
+
+def check_path(target_path, fs_type='file'):
+    if not (path.isfile(target_path) if fs_type == 'file' else path.isdir(target_path)):
+        fail('{} not existing: "{}"'.format(fs_type[0].upper() + fs_type[1:], target_path))
+    return path.abspath(target_path)
+
+
+def make_absolute(base_path, spec_path):
+    if not path.isabs(spec_path):
+        spec_path = path.join(base_path, spec_path)
+    spec_path = path.abspath(spec_path)
+    return spec_path if path.isfile(spec_path) else None
 
 
 def engroup(lst, get_key):
@@ -62,17 +91,238 @@ def get_sample_size(population_size):
     return sample_size
 
 
-def load_segment(audio_path):
-    result_path, _ = ensure_wav_with_format(audio_path, audio_format)
-    return audio_path, result_path
-
-
-def load_segment_dry(audio_path):
-    if path.isfile(audio_path):
-        logging.info('Would load file "{}"'.format(audio_path))
+def load_catalog():
+    catalog_entries = []
+    if CLI_ARGS.audio:
+        if CLI_ARGS.aligned:
+            catalog_entries.append((check_path(CLI_ARGS.audio), check_path(CLI_ARGS.aligned)))
+        else:
+            fail('If you specify "--audio", you also have to specify "--aligned"')
+    elif CLI_ARGS.aligned:
+        fail('If you specify "--aligned", you also have to specify "--audio"')
+    elif CLI_ARGS.catalog:
+        catalog = check_path(CLI_ARGS.catalog)
+        catalog_dir = path.dirname(catalog)
+        with open(catalog, 'r') as catalog_file:
+            catalog_file_entries = json.load(catalog_file)
+        for entry in progress(catalog_file_entries, desc='Reading catalog'):
+            audio = make_absolute(catalog_dir, entry['audio'])
+            aligned = make_absolute(catalog_dir, entry['aligned'])
+            if audio is None or aligned is None:
+                if CLI_ARGS.ignore_missing:
+                    continue
+                if audio is None:
+                    fail('Problem loading catalog "{}": Missing referenced audio file "{}"'
+                         .format(CLI_ARGS.catalog, entry['audio']))
+                if aligned is None:
+                    fail('Problem loading catalog "{}": Missing referenced alignment file "{}"'
+                         .format(CLI_ARGS.catalog, entry['aligned']))
+            catalog_entries.append((audio, aligned))
     else:
-        fail('File not found: "{}"'.format(audio_path))
-    return audio_path, audio_path
+        fail('You have to either specify "--audio" and "--aligned" or "--catalog"')
+    return catalog_entries
+
+
+def load_fragments(catalog_entries):
+    def get_meta_list(ae, mf):
+        if 'meta' in ae:
+            meta_fields = ae['meta']
+            if isinstance(meta_fields, dict) and mf in meta_fields:
+                mf = meta_fields[mf]
+                return mf if isinstance(mf, list) else [mf]
+        return []
+
+    required_metas = {}
+    if CLI_ARGS.debias is not None:
+        for debias_meta_field in CLI_ARGS.debias:
+            required_metas[debias_meta_field] = True
+    if CLI_ARGS.split and CLI_ARGS.split_field:
+        required_metas[CLI_ARGS.split_field] = True
+
+    fragments = []
+    reasons = Counter()
+    for catalog_index, catalog_entry in enumerate(progress(catalog_entries, desc='Loading alignments')):
+        audio_path, aligned_path = catalog_entry
+        with open(aligned_path, 'r') as aligned_file:
+            aligned = json.load(aligned_file)
+        for alignment_index, alignment in enumerate(aligned):
+            quality = eval(CLI_ARGS.criteria, {'math': math}, alignment)
+            alignment['quality'] = quality
+            if eval(CLI_ARGS.filter, {'math': math}, alignment):
+                reasons['Filter'] += 1
+                continue
+            meta = {}
+            keep = True
+            for meta_field in required_metas.keys():
+                meta_list = get_meta_list(alignment, meta_field)
+                if CLI_ARGS.split and CLI_ARGS.split_field == meta_field:
+                    if CLI_ARGS.split_drop_multiple and len(meta_list) > 1:
+                        reasons['Split drop multiple'] += 1
+                        keep = False
+                        break
+                    elif CLI_ARGS.split_drop_unknown and len(meta_list) == 0:
+                        reasons['Split drop unknown'] += 1
+                        keep = False
+                        break
+                meta[meta_field] = meta_list[0] if meta_list else UNKNOWN
+            if keep:
+                duration = alignment['end'] - alignment['start']
+                fragment = Fragment(catalog_index, alignment_index, quality=quality, duration=duration)
+                fragment.meta = meta
+                for minimum, partition_name in CLI_ARGS.partition:
+                    if quality >= minimum:
+                        fragment.partition = partition_name
+                        break
+                fragments.append(fragment)
+
+    if len(fragments) == 0:
+        fail('No samples left for export')
+
+    if len(reasons.keys()) > 0:
+        logging.info('Excluded number of samples (for each reason):')
+        for reason, count in reasons.most_common():
+            logging.info(' - "{}": {}'.format(reason, count))
+    return fragments
+
+
+def debias(fragments):
+    if CLI_ARGS.debias is not None:
+        for debias in CLI_ARGS.debias:
+            grouped = engroup(fragments, lambda f: f.meta[debias])
+            if UNKNOWN in grouped:
+                fragments = grouped[UNKNOWN]
+                del grouped[UNKNOWN]
+            else:
+                fragments = []
+            counts = list(map(lambda f: len(f), grouped.values()))
+            mean = statistics.mean(counts)
+            sigma = statistics.pstdev(counts, mu=mean)
+            cap = int(mean + CLI_ARGS.debias_sigma_factor * sigma)
+            counter = Counter()
+            for group, values in progress(grouped.items(), desc='De-biasing "{}"'.format(debias)):
+                if len(values) > cap:
+                    values.sort(key=lambda g: g['quality'])
+                    counter[group] += len(values) - cap
+                    values = values[-cap:]
+                fragments.extend(values)
+            if len(counter.keys()) > 0:
+                logging.info('Dropped for de-biasing "{}":'.format(debias))
+                for group, count in counter.most_common():
+                    logging.info(' - "{}": {}'.format(group, count))
+    return fragments
+
+
+def parse_set_assignments():
+    set_assignments = {}
+    for set_index, set_name in enumerate(SET_NAMES):
+        attr_name = 'assign_' + set_name
+        if hasattr(CLI_ARGS, attr_name):
+            set_entities = getattr(CLI_ARGS, attr_name)
+            if set_entities is not None:
+                for entity_id in str(set_entities).split(','):
+                    if entity_id in set_assignments:
+                        fail('Unable to assign entity "{}" to set "{}", as it is already assigned to set "{}"'
+                             .format(entity_id, set_name, SET_NAMES[set_assignments[entity_id]]))
+                    set_assignments[entity_id] = set_index
+    return set_assignments
+
+
+def check_targets():
+    if CLI_ARGS.target_dir is not None and CLI_ARGS.target_tar is not None:
+        fail('Only one allowed: --target-dir or --target-tar')
+    elif CLI_ARGS.target_dir is not None:
+        CLI_ARGS.target_dir = check_path(CLI_ARGS.target_dir, fs_type='directory')
+    elif CLI_ARGS.target_tar is not None:
+        if CLI_ARGS.sdb:
+            fail('Option --sdb not supported for --target-tar output. Use --target-dir instead.')
+        CLI_ARGS.target_tar = path.abspath(CLI_ARGS.target_tar)
+        if path.isfile(CLI_ARGS.target_tar):
+            if not CLI_ARGS.force:
+                fail('Target tar-file already existing - use --force to overwrite')
+        elif path.exists(CLI_ARGS.target_tar):
+            fail('Target tar-file path is existing, but not a file')
+        elif not path.isdir(path.dirname(CLI_ARGS.target_tar)):
+            fail('Unable to write tar-file: Path not existing')
+    else:
+        fail('Either --target-dir or --target-tar has to be provided')
+
+
+def split(fragments, set_assignments):
+    lists = []
+
+    def assign_fragments(frags, name):
+        lists.append(name)
+        duration = 0
+        for f in frags:
+            f.list_name = name
+            duration += f.duration
+        logging.info('Built set "{}" (samples: {}, duration: {})'
+                     .format(name, len(frags), timedelta(milliseconds=duration)))
+
+    if CLI_ARGS.split_seed is not None:
+        random.seed(CLI_ARGS.split_seed)
+
+    if CLI_ARGS.split and CLI_ARGS.split_field:
+        fragments = list(fragments)
+        metas = engroup(fragments, lambda f: f.meta[CLI_ARGS.split_field]).items()
+        metas = sorted(metas, key=lambda meta_frags: len(meta_frags[1]))
+        metas = list(map(lambda meta_frags: meta_frags[0], metas))
+        partitions = engroup(fragments, lambda f: f.partition)
+        partitions = list(map(lambda part_frags: (part_frags[0],
+                                                  get_sample_size(len(part_frags[1])),
+                                                  engroup(part_frags[1], lambda f: f.meta[CLI_ARGS.split_field]),
+                                                  [[], [], []]),
+                              partitions.items()))
+        remaining_metas = []
+        for meta in metas:
+            if meta in set_assignments:
+                set_index = set_assignments[meta]
+                for _, _, partition_portions, sample_sets in partitions:
+                    if meta in partition_portions:
+                        sample_sets[set_index].extend(partition_portions[meta])
+                        del partition_portions[meta]
+            else:
+                remaining_metas.append(meta)
+        metas = remaining_metas
+        for _, sample_size, _, sample_sets in partitions:
+            while len(metas) > 0 and (len(sample_sets[1]) < sample_size or len(sample_sets[2]) < sample_size):
+                for sample_set_index in [1, 2]:
+                    if len(metas) > 0 and sample_size > len(sample_sets[sample_set_index]):
+                        meta = metas.pop(0)
+                        for _, _, partition_portions, other_sample_sets in partitions:
+                            if meta in partition_portions:
+                                other_sample_sets[sample_set_index].extend(partition_portions[meta])
+                                del partition_portions[meta]
+        for partition, sample_size, partition_portions, sample_sets in partitions:
+            for portion in partition_portions.values():
+                sample_sets[0].extend(portion)
+            for set_index, set_name in enumerate(SET_NAMES):
+                assign_fragments(sample_sets[set_index], partition + '-' + set_name)
+    else:
+        partitions = engroup(fragments, lambda f: f.partition)
+        for partition, partition_fragments in partitions.items():
+            if CLI_ARGS.split:
+                sample_size = get_sample_size(len(partition_fragments))
+                random.shuffle(partition_fragments)
+                test_set = partition_fragments[:sample_size]
+                partition_fragments = partition_fragments[sample_size:]
+                dev_set = partition_fragments[:sample_size]
+                train_set = partition_fragments[sample_size:]
+                sample_sets = [train_set, dev_set, test_set]
+                for set_index, set_name in enumerate(SET_NAMES):
+                    assign_fragments(sample_sets[set_index], partition + '-' + set_name)
+            else:
+                assign_fragments(partition_fragments, partition)
+    return lists
+
+
+def check_overwrite(lists):
+    if CLI_ARGS.target_dir is not None and not CLI_ARGS.force:
+        for name in lists:
+            paths = [name + '.sdb', name + '.sdb.tmp'] if CLI_ARGS.sdb else [name, name + '.csv']
+            for p in paths:
+                if path.exists(path.join(CLI_ARGS.target_dir, p)):
+                    fail('"{}" already existing - use --force to ignore'.format(p))
 
 
 def parse_args():
@@ -88,7 +338,7 @@ def parse_args():
     parser.add_argument('--ignore-missing', action="store_true",
                         help='Ignores catalog entries with missing files')
 
-    parser.add_argument('--filter', type=str,
+    parser.add_argument('--filter', type=str, default='False',
                         help='Python expression that computes a boolean value from sample data fields. '
                              'If the result is True, the sample will be dropped.')
 
@@ -137,6 +387,8 @@ def parse_args():
                         help='Number of samples per bucket buffer during finalization')
     parser.add_argument('--sdb-audio-type', default='opus', choices=AUDIO_TYPE_LOOKUP.keys(),
                         help='Audio representation inside target SDBs')
+    parser.add_argument('--tmp-dir', type=str, default=None,
+                        help='Directory for temporary files - defaults to system one')
     parser.add_argument('--buffer', default='1MB',
                         help='Buffer size for writing files (~16MB by default)')
     parser.add_argument('--force', action="store_true",
@@ -170,320 +422,93 @@ def parse_args():
 
     args.buffer = parse_file_size(args.buffer)
     args.sdb_bucket_size = parse_file_size(args.sdb_bucket_size)
-    return args
-    
-    
-def main():
-    set_assignments = {}
-    for set_index, set_name in enumerate(SET_NAMES):
-        attr_name = 'assign_' + set_name
-        if hasattr(CLI_ARGS, attr_name):
-            set_entities = getattr(CLI_ARGS, attr_name)
-            if set_entities is not None:
-                for entity_id in str(set_entities).split(','):
-                    if entity_id in set_assignments:
-                        fail('Unable to assign entity "{}" to set "{}", as it is already assigned to set "{}"'
-                             .format(entity_id, set_name, SET_NAMES[set_assignments[entity_id]]))
-                    set_assignments[entity_id] = set_index
-
-    logging.basicConfig(stream=sys.stderr, level=CLI_ARGS.loglevel if CLI_ARGS.loglevel else 20)
-    logging.getLogger('sox').setLevel(logging.ERROR)
-
-    def progress(it=None, desc='Processing', total=None):
-        logging.info(desc)
-        return it if CLI_ARGS.no_progress else log_progress(it, interval=CLI_ARGS.progress_interval, total=total)
-
-    logging.debug("Start")
-
-    pairs = []
-
-    def check_path(target_path, fs_type='file'):
-        if not (path.isfile(target_path) if fs_type == 'file' else path.isdir(target_path)):
-            fail('{} not existing: "{}"'.format(fs_type[0].upper() + fs_type[1:], target_path))
-        return path.abspath(target_path)
-
-    def make_absolute(base_path, spec_path):
-        if not path.isabs(spec_path):
-            spec_path = path.join(base_path, spec_path)
-        spec_path = path.abspath(spec_path)
-        return spec_path if path.isfile(spec_path) else None
-
-    target_dir = target_tar = None
-    if CLI_ARGS.target_dir is not None and CLI_ARGS.target_tar is not None:
-        fail('Only one allowed: --target-dir or --target-tar')
-    elif CLI_ARGS.target_dir is not None:
-        target_dir = check_path(CLI_ARGS.target_dir, fs_type='directory')
-    elif CLI_ARGS.target_tar is not None:
-        if CLI_ARGS.sdb:
-            fail('Option --sdb not supported for --target-tar output. Use --target-dir instead.')
-        target_tar = path.abspath(CLI_ARGS.target_tar)
-        if path.isfile(target_tar):
-            if not CLI_ARGS.force:
-                fail('Target tar-file already existing - use --force to overwrite')
-        elif path.exists(target_tar):
-            fail('Target tar-file path is existing, but not a file')
-        elif not path.isdir(path.dirname(target_tar)):
-            fail('Unable to write tar-file: Path not existing')
-    else:
-        fail('Either --target-dir or --target-tar has to be provided')
-
-    if CLI_ARGS.audio:
-        if CLI_ARGS.aligned:
-            pairs.append((check_path(CLI_ARGS.audio), check_path(CLI_ARGS.aligned)))
-        else:
-            fail('If you specify "--audio", you also have to specify "--aligned"')
-    elif CLI_ARGS.aligned:
-        fail('If you specify "--aligned", you also have to specify "--audio"')
-    elif CLI_ARGS.catalog:
-        catalog = check_path(CLI_ARGS.catalog)
-        catalog_dir = path.dirname(catalog)
-        with open(catalog, 'r') as catalog_file:
-            catalog_entries = json.load(catalog_file)
-        for entry in progress(catalog_entries, desc='Reading catalog'):
-            audio = make_absolute(catalog_dir, entry['audio'])
-            aligned = make_absolute(catalog_dir, entry['aligned'])
-            if audio is None or aligned is None:
-                if CLI_ARGS.ignore_missing:
-                    continue
-                if audio is None:
-                    fail('Problem loading catalog "{}": Missing referenced audio file "{}"'
-                         .format(CLI_ARGS.catalog, entry['audio']))
-                if aligned is None:
-                    fail('Problem loading catalog "{}": Missing referenced alignment file "{}"'
-                         .format(CLI_ARGS.catalog, entry['aligned']))
-            pairs.append((audio, aligned))
-    else:
-        fail('You have to either specify "--audio" and "--aligned" or "--catalog"')
-
-    dry_run = CLI_ARGS.dry_run or CLI_ARGS.dry_run_fast
-    load_samples = not CLI_ARGS.dry_run_fast
-
+    args.dry_run = args.dry_run or args.dry_run_fast
     partition_specs = []
-    if CLI_ARGS.partition is not None:
-        for partition_expr in CLI_ARGS.partition:
+    if args.partition is not None:
+        for partition_expr in args.partition:
             parts = partition_expr.split(':')
             if len(parts) != 2:
                 fail('Wrong partition specification: "{}"'.format(partition_expr))
             partition_specs.append((float(parts[0]), str(parts[1])))
     partition_specs.sort(key=lambda p: p[0], reverse=True)
+    args.partition = partition_specs
+    return args
 
-    fragments = []
-    for audio_path, aligned_path in progress(pairs, desc='Loading alignments'):
-        with open(aligned_path, 'r') as aligned_file:
-            aligned_fragments = json.load(aligned_file)
-        for fragment in aligned_fragments:
-            fragment['audio_path'] = audio_path
-            fragments.append(fragment)
 
-    if CLI_ARGS.filter is not None:
-        kept_fragments = []
-        for fragment in progress(fragments, desc='Filtering'):
-            if not eval(CLI_ARGS.filter, {'math': math}, fragment):
-                kept_fragments.append(fragment)
-        if len(kept_fragments) < len(fragments):
-            logging.info('Filtered out {} samples'.format(len(fragments) - len(kept_fragments)))
-        fragments = kept_fragments
-        if len(fragments) == 0:
-            fail('Filter left no samples to export')
+def load_sample(entry):
+    catalog_index, catalog_entry = entry
+    audio_path, aligned_path = catalog_entry
+    wav_path, wav_is_temp = ensure_wav_with_format(audio_path, audio_format, tmp_dir=CLI_ARGS.tmp_dir)
+    with open(aligned_path, 'r') as aligned_file:
+        aligned = json.load(aligned_file)
+    return catalog_index, wav_path, wav_is_temp, aligned
 
-    for fragment in progress(fragments, desc='Computing qualities'):
-        fragment['quality'] = eval(CLI_ARGS.criteria, {'math': math}, fragment)
 
-    def get_meta_list(f, meta_field):
-        if 'meta' in f:
-            meta_fields = f['meta']
-            if isinstance(meta_fields, dict) and meta_field in meta_fields:
-                meta_field = meta_fields[meta_field]
-                return meta_field if isinstance(meta_field, list) else [meta_field]
-        return []
-
-    def get_first_meta(f, meta_field):
-        meta_field = get_meta_list(f, meta_field)
-        return meta_field[0] if meta_field else UNKNOWN
-
-    if CLI_ARGS.debias is not None:
-        for debias in CLI_ARGS.debias:
-            grouped = engroup(fragments, lambda f: get_first_meta(f, debias))
-            if UNKNOWN in grouped:
-                fragments = grouped[UNKNOWN]
-                del grouped[UNKNOWN]
-            else:
-                fragments = []
-            counts = list(map(lambda f: len(f), grouped.values()))
-            mean = statistics.mean(counts)
-            sigma = statistics.pstdev(counts, mu=mean)
-            cap = int(mean + CLI_ARGS.debias_sigma_factor * sigma)
-            counter = Counter()
-            for group, values in progress(grouped.items(), desc='Debiasing "{}"'.format(debias)):
-                if len(values) > cap:
-                    values.sort(key=lambda g: g['quality'])
-                    counter[group] += len(values) - cap
-                    values = values[-cap:]
-                fragments.extend(values)
-            logging.info('Dropped for debiasing "{}":'.format(debias))
-            for group, count in counter.most_common():
-                logging.info(' - "{}": {}'.format(group, count))
-
-    def get_partition(f):
-        quality = f['quality']
-        for minimum, partition_name in partition_specs:
-            if quality >= minimum:
-                return partition_name
-        return 'other'
-
-    lists = {}
-
-    def assign_fragments(frags, name):
-        if name not in lists:
-            lists[name] = []
-            if CLI_ARGS.target_dir is not None and not CLI_ARGS.force:
-                paths = [name + '.sdb', name + '.sdb.tmp'] if CLI_ARGS.sdb else [name, name + '.csv']
-                for p in paths:
-                    if path.exists(path.join(target_dir, p)):
-                        fail('"{}" already existing - use --force to ignore'.format(p))
-        duration = 0
-        for f in frags:
-            f['list_name'] = name
-            duration += (f['end'] - f['start'])
-        logging.info('Built set "{}" (samples: {}, duration: {})'.format(name,
-                                                                         len(frags),
-                                                                         timedelta(milliseconds=duration)))
-
-    if CLI_ARGS.split_seed is not None:
-        random.seed(CLI_ARGS.split_seed)
-
-    if CLI_ARGS.split and CLI_ARGS.split_field:
-        if CLI_ARGS.split_drop_multiple:
-            fragments = filter(lambda f: len(get_meta_list(f, CLI_ARGS.split_field)) < 2, fragments)
-        if CLI_ARGS.split_drop_unknown:
-            fragments = filter(lambda f: len(get_meta_list(f, CLI_ARGS.split_field)) > 0, fragments)
-        fragments = list(fragments)
-        metas = engroup(fragments, lambda f: get_first_meta(f, CLI_ARGS.split_field)).items()
-        metas = sorted(metas, key=lambda meta_frags: len(meta_frags[1]))
-        metas = list(map(lambda meta_frags: meta_frags[0], metas))
-        partitions = engroup(fragments, get_partition)
-        partitions = list(map(lambda part_frags: (part_frags[0],
-                                                  get_sample_size(len(part_frags[1])),
-                                                  engroup(part_frags[1], lambda pf: get_first_meta(pf, CLI_ARGS.split_field)),
-                                                  [[], [], []]),
-                              partitions.items()))
-        remaining_metas = []
-        for meta in metas:
-            if meta in set_assignments:
-                set_index = set_assignments[meta]
-                for _, _, partition_portions, sample_sets in partitions:
-                    if meta in partition_portions:
-                        sample_sets[set_index].extend(partition_portions[meta])
-                        del partition_portions[meta]
-            else:
-                remaining_metas.append(meta)
-        metas = remaining_metas
-        for _, sample_size, _, sample_sets in partitions:
-            while len(metas) > 0 and (len(sample_sets[1]) < sample_size or len(sample_sets[2]) < sample_size):
-                for sample_set_index, sample_set in enumerate(sample_sets):
-                    if len(metas) > 0 and sample_size > len(sample_set):
-                        meta = metas.pop(0)
-                        for _, _, partition_portions, other_sample_sets in partitions:
-                            if meta in partition_portions:
-                                other_sample_sets[sample_set_index].extend(partition_portions[meta])
-                                del partition_portions[meta]
-        for partition, sample_size, partition_portions, sample_sets in partitions:
-            for portion in partition_portions.values():
-                sample_sets[0].extend(portion)
-            for set_index, set_name in enumerate(SET_NAMES):
-                assign_fragments(sample_sets[set_index], partition + '-' + set_name)
+def load_sample_dry(entry):
+    catalog_index, catalog_entry = entry
+    audio_path, aligned_path = catalog_entry
+    if path.isfile(audio_path):
+        logging.info('Would load file "{}"'.format(audio_path))
     else:
-        partitions = engroup(fragments, get_partition)
-        for partition, partition_fragments in partitions.items():
-            if CLI_ARGS.split:
-                sample_size = get_sample_size(len(partition_fragments))
-                random.shuffle(partition_fragments)
-                test_set = partition_fragments[:sample_size]
-                partition_fragments = partition_fragments[sample_size:]
-                dev_set = partition_fragments[:sample_size]
-                train_set = partition_fragments[sample_size:]
-                sample_sets = [train_set, dev_set, test_set]
-                for set_index, set_name in enumerate(SET_NAMES):
-                    assign_fragments(sample_sets[set_index], partition + '-' + set_name)
-            else:
-                assign_fragments(partition_fragments, partition)
+        fail('Audio file not found: "{}"'.format(audio_path))
+    if path.isfile(aligned_path):
+        logging.info('Would load file "{}"'.format(audio_path))
+    else:
+        fail('Alignment file not found: "{}"'.format(audio_path))
+    return catalog_index, '', False, []
 
-    def list_fragments():
-        audio_files = engroup(fragments, lambda f: f['audio_path'])
-        pool = Pool(CLI_ARGS.workers)
-        ls = load_segment if load_samples else load_segment_dry
-        for original_path, converted_path in pool.imap_unordered(ls, audio_files.keys()):
-            file_fragments = audio_files[original_path]
-            file_fragments.sort(key=lambda f: f['start'])
-            if load_samples:
-                with wave.open(converted_path, 'rb') as source_wav_file:
-                    duration = source_wav_file.getframerate() * source_wav_file.getnframes() * 1000
-                    for fragment in file_fragments:
-                        try:
-                            start, end = fragment['start'], fragment['end']
-                            assert start < end <= duration
-                            fragment_audio = extract_audio(source_wav_file, start / 1000.0, end / 1000.0)
-                        except Exception as ae:
-                            raise RuntimeError('Problem getting audio for fragment\n{}"'
-                                               .format(json.dumps(fragment, indent=4))) from ae
-                        yield fragment_audio, fragment
-                if original_path != converted_path:
-                    os.remove(converted_path)
-            else:
+
+def load_samples(catalog_entries, fragments):
+    catalog_index_wise = engroup(fragments, lambda f: f.catalog_index)
+    pool = Pool(CLI_ARGS.workers)
+    ls = load_sample_dry if CLI_ARGS.dry_run_fast else load_sample
+    indexed_entries = map(lambda ci: (ci, catalog_entries[ci]), catalog_index_wise.keys())
+    for catalog_index, wav_path, wav_is_temp, aligned in pool.imap_unordered(ls, indexed_entries):
+        file_fragments = catalog_index_wise[catalog_index]
+        file_fragments.sort(key=lambda f: f.alignment_index)
+        if CLI_ARGS.dry_run_fast:
+            for fragment in file_fragments:
+                yield b'', fragment, ''
+        else:
+            with wave.open(wav_path, 'rb') as source_wav_file:
+                wav_duration = source_wav_file.getframerate() * source_wav_file.getnframes() * 1000
                 for fragment in file_fragments:
-                    yield b'', fragment
+                    aligned_entry = aligned[fragment.alignment_index]
+                    try:
+                        start, end = aligned_entry['start'], aligned_entry['end']
+                        assert start < end <= wav_duration
+                        fragment_audio = extract_audio(source_wav_file, start / 1000.0, end / 1000.0)
+                    except Exception as ae:
+                        raise RuntimeError('Problem getting audio for fragment\n{}"'
+                                           .format(json.dumps(fragment, indent=4))) from ae
+                    yield fragment_audio, fragment, aligned_entry['aligned']
+            if wav_is_temp:
+                os.remove(wav_path)
 
-    if CLI_ARGS.sdb:
-        audio_type = AUDIO_TYPE_LOOKUP[CLI_ARGS.sdb_audio_type]
-        for list_name in lists.keys():
-            sdb_path = os.path.join(target_dir, list_name + '.sdb')
-            if dry_run:
-                logging.info('Would create SDB "{}"'.format(sdb_path))
-            else:
-                logging.info('Creating SDB "{}"'.format(sdb_path))
-                lists[list_name] = SortingSDBWriter(sdb_path,
-                                                    audio_type=audio_type,
-                                                    buffering=CLI_ARGS.buffer,
-                                                    cache_size=CLI_ARGS.sdb_bucket_size,
-                                                    buffered_samples=CLI_ARGS.sdb_buffered_samples)
 
-        def to_samples():
-            for pcm_data, f in list_fragments():
-                cs = LabeledSample(AUDIO_TYPE_PCM, pcm_data, f['aligned'], audio_format=audio_format)
-                cs.meta = f
-                yield cs
+def write_meta(file, catalog_entries, id_plus_fragment_iter):
+    writer = csv.writer(file)
+    writer.writerow(['sample', 'split_entity', 'catalog_index', 'source_audio_file', 'aligned_file', 'alignment_index'])
+    for sample_id, fragment in id_plus_fragment_iter:
+        split_entity = fragment.meta[CLI_ARGS.split_field] \
+            if (CLI_ARGS.split and CLI_ARGS.split_field) else ''
+        source_audio_file, aligned_file = catalog_entries[fragment.catalog_index]
+        writer.writerow([sample_id,
+                         split_entity,
+                         fragment.catalog_index,
+                         source_audio_file,
+                         aligned_file,
+                         fragment.alignment_index])
 
-        samples = change_audio_types(to_samples(),
-                                     audio_type=audio_type,
-                                     processes=CLI_ARGS.sdb_workers) if load_samples else to_samples()
-        set_counter = Counter()
-        for sample in progress(samples, desc='Exporting samples', total=len(fragments)):
-            list_name = sample.meta['list_name']
-            if not dry_run:
-                set_counter[list_name] += 1
-                sdb = lists[list_name]
-                sdb.add(sample)
-        for list_name, sdb in lists.items():
-            meta_path = os.path.join(target_dir, list_name + '.meta')
-            if not dry_run:
-                for _ in progress(sdb.finalize(), desc='Finalizing {}'.format(list_name), total=set_counter[list_name]):
-                    pass
-                if not CLI_ARGS.no_meta:
-                    logging.info('Writing meta file "{}"'.format(meta_path))
-                    with open(meta_path, 'w') as meta_file:
-                        json.dump(sdb.meta_dict, meta_file, indent=4 if CLI_ARGS.pretty else None)
-            else:
-                if not CLI_ARGS.no_meta:
-                    logging.info('Would write meta file "{}"'.format(meta_path))
-        return
 
+def write_csvs_and_samples(catalog_entries, lists, fragments):
     created_directories = {}
     tar = None
-    if target_tar is not None:
-        if dry_run:
-            logging.info('Would create tar-file "{}"'.format(target_tar))
+    if CLI_ARGS.target_tar is not None:
+        if CLI_ARGS.dry_run:
+            logging.info('Would create tar-file "{}"'.format(CLI_ARGS.target_tar))
         else:
-            base_tar = open(target_tar, 'wb', buffering=CLI_ARGS.buffer)
+            base_tar = open(CLI_ARGS.target_tar, 'wb', buffering=CLI_ARGS.buffer)
             tar = tarfile.open(fileobj=base_tar, mode='w')
 
     class TargetFile:
@@ -494,14 +519,14 @@ def main():
 
         def __enter__(self):
             parts = self.data_path.split('/')
-            dirs = ([target_dir] if target_dir is not None else []) + parts[:-1]
+            dirs = ([CLI_ARGS.target_dir] if CLI_ARGS.target_dir is not None else []) + parts[:-1]
             for i in range(1, len(dirs)):
                 vp = '/'.join(dirs[:i + 1])
                 if not vp in created_directories:
                     if tar is None:
                         dir_path = path.join(*dirs[:i + 1])
                         if not path.isdir(dir_path):
-                            if dry_run:
+                            if CLI_ARGS.dry_run:
                                 logging.info('Would create directory "{}"'.format(dir_path))
                             else:
                                 os.mkdir(dir_path)
@@ -510,9 +535,9 @@ def main():
                         tdir.type = tarfile.DIRTYPE
                         tar.addfile(tdir)
                     created_directories[vp] = True
-            if target_tar is None:
-                file_path = path.join(target_dir, *self.data_path.split('/'))
-                if dry_run:
+            if CLI_ARGS.target_tar is None:
+                file_path = path.join(CLI_ARGS.target_dir, *self.data_path.split('/'))
+                if CLI_ARGS.dry_run:
                     logging.info('Would write file "{}"'.format(file_path))
                     self.open_file = io.BytesIO() if 'b' in self.mode else io.StringIO()
                 else:
@@ -537,35 +562,96 @@ def main():
             if self.open_file is not None:
                 self.open_file.close()
 
-    for audio_segment, fragment in progress(list_fragments(), desc='Exporting samples', total=len(fragments)):
-        list_name = fragment['list_name']
-        group_list = lists[list_name]
-        sample_path = '{}/sample-{:010d}.wav'.format(fragment['list_name'], len(group_list))
+    group_lists = {}
+    for list_name in lists:
+        group_lists[list_name] = []
+
+    for pcm_data, fragment, transcript in progress(load_samples(catalog_entries, fragments),
+                                                   desc='Exporting samples', total=len(fragments)):
+        group_list = group_lists[fragment.list_name]
+        sample_path = '{}/sample-{:010d}.wav'.format(fragment.list_name, len(group_list))
         with TargetFile(sample_path, "wb") as base_wav_file:
             with wave.open(base_wav_file, 'wb') as wav_file:
                 write_audio_format_to_wav_file(wav_file)
-                wav_file.writeframes(audio_segment)
+                wav_file.writeframes(pcm_data)
                 file_size = base_wav_file.tell()
-        group_list.append((sample_path, file_size, fragment))
+        group_list.append((sample_path, file_size, fragment, transcript))
 
-    for list_name, group_list in progress(lists.items(), desc='Writing lists'):
-        if not CLI_ARGS.no_meta:
-            entries = {}
-            for rel_path, _, fragment in group_list:
-                entries[rel_path] = fragment
-            with TargetFile(list_name + '.meta', 'w') as meta_file:
-                json.dump(entries, meta_file, indent=4 if CLI_ARGS.pretty else None)
+    for list_name, group_list in progress(group_lists.items(), desc='Writing lists'):
         with TargetFile(list_name + '.csv', 'w') as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow(['wav_filename', 'wav_filesize', 'transcript'])
-            for rel_path, file_size, fragment in group_list:
-                writer.writerow([rel_path, file_size, fragment['aligned']])
+            for rel_path, file_size, fragment, transcript in group_list:
+                writer.writerow([rel_path, file_size, transcript])
+        if not CLI_ARGS.no_meta:
+            with TargetFile(list_name + '.meta', 'w') as meta_file:
+                write_meta(meta_file, catalog_entries, map(lambda gi: (gi[0], gi[2]), group_list))
 
     if tar is not None:
         tar.close()
 
 
+def write_sdbs(catalog_entries, lists, fragments):
+    audio_type = AUDIO_TYPE_LOOKUP[CLI_ARGS.sdb_audio_type]
+    sdbs = {}
+    for list_name in lists:
+        sdb_path = os.path.join(CLI_ARGS.target_dir, list_name + '.sdb')
+        if CLI_ARGS.dry_run:
+            logging.info('Would create SDB "{}"'.format(sdb_path))
+        else:
+            logging.info('Creating SDB "{}"'.format(sdb_path))
+            sdbs[list_name] = SortingSDBWriter(sdb_path,
+                                               audio_type=audio_type,
+                                               buffering=CLI_ARGS.buffer,
+                                               cache_size=CLI_ARGS.sdb_bucket_size,
+                                               buffered_samples=CLI_ARGS.sdb_buffered_samples)
+
+    def to_samples():
+        for pcm_data, fragment, transcript in load_samples(catalog_entries, fragments):
+            cs = LabeledSample(AUDIO_TYPE_PCM, pcm_data, transcript, audio_format=audio_format)
+            cs.meta = fragment
+            yield cs
+
+    samples = change_audio_types(to_samples(),
+                                 audio_type=audio_type,
+                                 processes=CLI_ARGS.sdb_workers) if not CLI_ARGS.dry_run_fast else to_samples()
+    set_counter = Counter()
+    for sample in progress(samples, desc='Exporting samples', total=len(fragments)):
+        list_name = sample.meta.list_name
+        if not CLI_ARGS.dry_run:
+            set_counter[list_name] += 1
+            sdb = sdbs[list_name]
+            sdb.add(sample)
+    for list_name, sdb in sdbs.items():
+        meta_path = os.path.join(CLI_ARGS.target_dir, list_name + '.meta')
+        if CLI_ARGS.dry_run:
+            if not CLI_ARGS.no_meta:
+                logging.info('Would write meta file "{}"'.format(meta_path))
+        else:
+            for _ in progress(sdb.finalize(), desc='Finalizing {}'.format(list_name), total=set_counter[list_name]):
+                pass
+            if not CLI_ARGS.no_meta:
+                with open(meta_path, 'w') as meta_file:
+                    write_meta(meta_file, catalog_entries, enumerate(sdb.meta_list))
+
+
+def main():
+    set_assignments = parse_set_assignments()
+    check_targets()
+    catalog_entries = load_catalog()
+    fragments = load_fragments(catalog_entries)
+    fragments = debias(fragments)
+    lists = split(fragments, set_assignments)
+    check_overwrite(lists)
+    if CLI_ARGS.sdb:
+        write_sdbs(catalog_entries, lists, fragments)
+    else:
+        write_csvs_and_samples(catalog_entries, lists, fragments)
+
+
 if __name__ == '__main__':
     CLI_ARGS = parse_args()
     audio_format = (CLI_ARGS.rate, CLI_ARGS.channels, CLI_ARGS.width)
+    logging.basicConfig(stream=sys.stderr, level=CLI_ARGS.loglevel)
+    logging.getLogger('sox').setLevel(logging.ERROR)
     main()

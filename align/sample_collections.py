@@ -143,6 +143,7 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
                                        id_prefix='#pre-sorted')
         self.cache_size = cache_size
         self.meta_dict = {}
+        self.meta_list = []
         self.buckets = []
         self.bucket = []
         self.bucket_offset = 0
@@ -211,8 +212,8 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
                              id_prefix=self.id_prefix) as sdb_writer:
             for index, sample in enumerate(interleaved):
                 old_id = sample.sample_id
-                new_id = sdb_writer.add(sample)
-                self.meta_dict[new_id] = self.meta_dict[old_id]
+                sdb_writer.add(sample)
+                self.meta_list.append(self.meta_dict[old_id])
                 del self.meta_dict[old_id]
                 yield index / num_samples
         os.unlink(self.tmp_sdb_filename)
