@@ -136,7 +136,7 @@ def load_fragments(catalog_entries):
     if CLI_ARGS.debias is not None:
         for debias_meta_field in CLI_ARGS.debias:
             required_metas[debias_meta_field] = True
-    if CLI_ARGS.split and CLI_ARGS.split_field:
+    if CLI_ARGS.split and CLI_ARGS.split_field is not None:
         required_metas[CLI_ARGS.split_field] = True
 
     fragments = []
@@ -262,7 +262,7 @@ def split(fragments, set_assignments):
     if CLI_ARGS.split_seed is not None:
         random.seed(CLI_ARGS.split_seed)
 
-    if CLI_ARGS.split and CLI_ARGS.split_field:
+    if CLI_ARGS.split and CLI_ARGS.split_field is not None:
         fragments = list(fragments)
         metas = engroup(fragments, lambda f: f.meta[CLI_ARGS.split_field]).items()
         metas = sorted(metas, key=lambda meta_frags: len(meta_frags[1]))
@@ -490,9 +490,9 @@ def load_samples(catalog_entries, fragments):
 def write_meta(file, catalog_entries, id_plus_fragment_iter):
     writer = csv.writer(file)
     writer.writerow(['sample', 'split_entity', 'catalog_index', 'source_audio_file', 'aligned_file', 'alignment_index'])
+    has_split_entity = CLI_ARGS.split and CLI_ARGS.split_field is not None
     for sample_id, fragment in id_plus_fragment_iter:
-        split_entity = fragment.meta[CLI_ARGS.split_field] \
-            if (CLI_ARGS.split and CLI_ARGS.split_field) else ''
+        split_entity = fragment.meta[CLI_ARGS.split_field] if has_split_entity else ''
         source_audio_file, aligned_file = catalog_entries[fragment.catalog_index]
         writer.writerow([sample_id,
                          split_entity,
