@@ -319,9 +319,10 @@ def split(fragments, set_assignments):
 def check_overwrite(lists):
     if CLI_ARGS.target_dir is not None and not CLI_ARGS.force:
         for name in lists:
-            paths = [name + '.sdb', name + '.sdb.tmp'] if CLI_ARGS.sdb else [name, name + '.csv']
-            for p in paths:
-                if path.exists(path.join(CLI_ARGS.target_dir, p)):
+            suffixes = ['.meta'] + (['.sdb', '.sdb.tmp'] if CLI_ARGS.sdb else ['', '.csv'])
+            for s in suffixes:
+                p = path.join(CLI_ARGS.target_dir, name + s)
+                if path.exists(p):
                     fail('"{}" already existing - use --force to ignore'.format(p))
 
 
