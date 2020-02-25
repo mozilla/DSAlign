@@ -5,6 +5,7 @@ import csv
 import math
 import json
 import wave
+import pickle
 import random
 import tarfile
 import logging
@@ -329,6 +330,8 @@ def check_overwrite(lists):
 def parse_args():
     parser = argparse.ArgumentParser(description='Export aligned speech samples.')
 
+    parser.add_argument('--plan', type=str,
+                        help='Export plan (preparation-cache) to load and/or store')
     parser.add_argument('--audio', type=str,
                         help='Take audio file as input (requires "--aligned <file>")')
     parser.add_argument('--aligned', type=str,
@@ -636,14 +639,40 @@ def write_sdbs(catalog_entries, lists, fragments):
                     write_meta(meta_file, catalog_entries, enumerate(sdb.meta_list))
 
 
+def load_plan():
+    if CLI_ARGS.plan is not None and os.path.isfile(CLI_ARGS.plan):
+        try:
+            logging.info('Loading export-plan from "{}"'.format(CLI_ARGS.plan))
+            with open(CLI_ARGS.plan, 'rb') as plan_file:
+                catalog_entries, lists, fragments = pickle.load(plan_file)
+            return True, catalog_entries, lists, fragments
+        except pickle.PickleError:
+            logging.warn('Unable to load export-plan "{}" - rebuilding'.format(CLI_ARGS.plan))
+            os.remove(CLI_ARGS.plan)
+    return False, None, None, None
+
+
+def save_plan(catalog_entries, lists, fragments):
+    if CLI_ARGS.plan is not None:
+        logging.info('Saving export-plan to "{}"'.format(CLI_ARGS.plan))
+        with open(CLI_ARGS.plan, 'wb') as plan_file:
+            pickle.dump((catalog_entries, lists, fragments), plan_file)
+
+
 def main():
-    set_assignments = parse_set_assignments()
-    check_targets()
-    catalog_entries = load_catalog()
-    fragments = load_fragments(catalog_entries)
-    fragments = debias(fragments)
-    lists = split(fragments, set_assignments)
-    check_overwrite(lists)
+    has_plan, catalog_entries, lists, fragments = load_plan()
+    if has_plan:
+        check_targets()
+        check_overwrite(lists)
+    else:
+        set_assignments = parse_set_assignments()
+        check_targets()
+        catalog_entries = load_catalog()
+        fragments = load_fragments(catalog_entries)
+        fragments = debias(fragments)
+        lists = split(fragments, set_assignments)
+        save_plan(catalog_entries, lists, fragments)
+        check_overwrite(lists)
     if CLI_ARGS.sdb:
         write_sdbs(catalog_entries, lists, fragments)
     else:
