@@ -200,12 +200,12 @@ def debias(fragments):
             sigma = statistics.pstdev(counts, mu=mean)
             cap = int(mean + CLI_ARGS.debias_sigma_factor * sigma)
             counter = Counter()
-            for group, values in progress(grouped.items(), desc='De-biasing "{}"'.format(debias)):
-                if len(values) > cap:
-                    values.sort(key=lambda g: g['quality'])
-                    counter[group] += len(values) - cap
-                    values = values[-cap:]
-                fragments.extend(values)
+            for group, group_fragments in progress(grouped.items(), desc='De-biasing "{}"'.format(debias)):
+                if len(group_fragments) > cap:
+                    group_fragments.sort(key=lambda f: f.quality)
+                    counter[group] += len(group_fragments) - cap
+                    group_fragments = group_fragments[-cap:]
+                fragments.extend(group_fragments)
             if len(counter.keys()) > 0:
                 logging.info('Dropped for de-biasing "{}":'.format(debias))
                 for group, count in counter.most_common():
