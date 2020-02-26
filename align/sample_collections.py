@@ -186,9 +186,9 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
         self.tmp_sdb.close()
         self.tmp_sdb = None
         if self.buffered_samples is None:
-            avg_sample_size = self.overall_size / num_samples
-            max_cached_samples = self.cache_size / avg_sample_size
-            buffer_size = max(1, int(max_cached_samples / len(self.buckets)))
+            avg_sample_size = self.overall_size / max(1, num_samples)
+            max_cached_samples = self.cache_size / max(1, avg_sample_size)
+            buffer_size = max(1, int(max_cached_samples / max(1, len(self.buckets))))
         else:
             buffer_size = self.buffered_samples
         sdb_reader = SDB(self.tmp_sdb_filename, buffering=self.buffering, id_prefix='#pre-sorted')

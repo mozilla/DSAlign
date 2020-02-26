@@ -3,6 +3,7 @@ import io
 import sys
 import csv
 import math
+import time
 import json
 import wave
 import pickle
@@ -17,7 +18,7 @@ from datetime import timedelta
 from collections import Counter
 from multiprocessing import Pool
 from audio import AUDIO_TYPE_PCM, AUDIO_TYPE_WAV, AUDIO_TYPE_OPUS,\
-    ensure_wav_with_format, extract_audio, change_audio_types, write_audio_format_to_wav_file
+    ensure_wav_with_format, extract_audio, change_audio_types, write_audio_format_to_wav_file, verify_wav_file
 from sample_collections import SortingSDBWriter, LabeledSample
 from utils import parse_file_size, log_progress
 
@@ -397,10 +398,10 @@ def parse_args():
                         help='Buffer size for writing files (~16MB by default)')
     parser.add_argument('--force', action="store_true",
                         help='Overwrite existing files')
+    parser.add_argument('--skip-damaged', action="store_true",
+                        help='If damaged audio files and their samples should be skipped instead of failing export')
     parser.add_argument('--no-meta', action="store_true",
                         help='No writing of meta data files')
-    parser.add_argument('--pretty', action="store_true",
-                        help='Writes indented JSON output')
     parser.add_argument('--rate', type=int, default=16000,
                         help='Export wav-files with this sample rate')
     parser.add_argument('--channels', type=int, default=1,
@@ -442,10 +443,22 @@ def parse_args():
 def load_sample(entry):
     catalog_index, catalog_entry = entry
     audio_path, aligned_path = catalog_entry
-    wav_path, wav_is_temp = ensure_wav_with_format(audio_path, audio_format, tmp_dir=CLI_ARGS.tmp_dir)
     with open(aligned_path, 'r') as aligned_file:
         aligned = json.load(aligned_file)
-    return catalog_index, wav_path, wav_is_temp, aligned
+    tries = 2
+    while tries > 0:
+        wav_path, wav_is_temp = ensure_wav_with_format(audio_path, audio_format, tmp_dir=CLI_ARGS.tmp_dir)
+        if wav_is_temp:
+            time.sleep(1)
+        if wav_path is not None:
+            if verify_wav_file(wav_path):
+                return catalog_index, wav_path, wav_is_temp, aligned
+            if wav_is_temp:
+                os.remove(wav_path)
+        logging.warn('Problem converting "{}" into required format - retrying...'.format(audio_path))
+        time.sleep(10)
+        tries -= 1
+    return catalog_index, None, False, aligned
 
 
 def load_sample_dry(entry):
@@ -468,6 +481,14 @@ def load_samples(catalog_entries, fragments):
     ls = load_sample_dry if CLI_ARGS.dry_run_fast else load_sample
     indexed_entries = map(lambda ci: (ci, catalog_entries[ci]), catalog_index_wise.keys())
     for catalog_index, wav_path, wav_is_temp, aligned in pool.imap_unordered(ls, indexed_entries):
+        if wav_path is None:
+            src_audio_path = catalog_entries[catalog_index][0]
+            message = 'Unable to convert audio file "{}" to required format - skipping'.format(src_audio_path)
+            if CLI_ARGS.skip_damaged:
+                logging.warn(message)
+                continue
+            else:
+                raise RuntimeError(message)
         file_fragments = catalog_index_wise[catalog_index]
         file_fragments.sort(key=lambda f: f.alignment_index)
         if CLI_ARGS.dry_run_fast:

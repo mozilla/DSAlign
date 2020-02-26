@@ -129,9 +129,23 @@ def get_np_duration(np_len, audio_format=DEFAULT_FORMAT):
 
 def convert_audio(src_audio_path, dst_audio_path, file_type=None, audio_format=DEFAULT_FORMAT):
     sample_rate, channels, width = audio_format
-    transformer = sox.Transformer()
-    transformer.set_output_format(file_type=file_type, rate=sample_rate, channels=channels, bits=width*8)
-    transformer.build(src_audio_path, dst_audio_path)
+    try:
+        transformer = sox.Transformer()
+        transformer.set_output_format(file_type=file_type, rate=sample_rate, channels=channels, bits=width*8)
+        transformer.build(src_audio_path, dst_audio_path)
+    except sox.core.SoxError:
+        return False
+    return True
+
+
+def verify_wav_file(wav_path):
+    try:
+        with wave.open(wav_path, 'r') as wav_file:
+            if wav_file.getnframes() > 0:
+                return True
+    except:
+        return False
+    return False
 
 
 def ensure_wav_with_format(src_audio_path, audio_format=DEFAULT_FORMAT, tmp_dir=None):
@@ -141,8 +155,10 @@ def ensure_wav_with_format(src_audio_path, audio_format=DEFAULT_FORMAT, tmp_dir=
                 return src_audio_path, False
     fd, tmp_file_path = tempfile.mkstemp(suffix='.wav', dir=tmp_dir)
     os.close(fd)
-    convert_audio(src_audio_path, tmp_file_path, file_type='wav', audio_format=audio_format)
-    return tmp_file_path, True
+    if convert_audio(src_audio_path, tmp_file_path, file_type='wav', audio_format=audio_format):
+        return tmp_file_path, True
+    os.remove(tmp_file_path)
+    return None, False
 
 
 def extract_audio(audio_file, start, end):
@@ -170,7 +186,8 @@ class AudioFile:
                 return self.open_file
             self.open_file.close()
         _, self.tmp_file_path = tempfile.mkstemp(suffix='.wav')
-        convert_audio(self.audio_path, self.tmp_file_path, file_type='wav', audio_format=self.audio_format)
+        if not convert_audio(self.audio_path, self.tmp_file_path, file_type='wav', audio_format=self.audio_format):
+            raise RuntimeError('Unable to convert "{}" to required format'.format(self.audio_path))
         if self.as_path:
             return self.tmp_file_path
         self.open_file = wave.open(self.tmp_file_path, 'r')
