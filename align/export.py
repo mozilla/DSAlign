@@ -41,8 +41,9 @@ class Fragment:
         self.list_name = 'other'
 
 
-def progress(it=None, desc='Processing', total=None):
-    logging.info(desc)
+def progress(it=None, desc=None, total=None):
+    if desc is not None:
+        logging.info(desc)
     return it if CLI_ARGS.no_progress else log_progress(it, interval=CLI_ARGS.progress_interval, total=total)
 
 
@@ -511,11 +512,11 @@ def load_samples(catalog_entries, fragments):
                 os.remove(wav_path)
 
 
-def write_meta(file, catalog_entries, id_plus_fragment_iter):
+def write_meta(file, catalog_entries, id_plus_fragment_iter, total=None):
     writer = csv.writer(file)
     writer.writerow(['sample', 'split_entity', 'catalog_index', 'source_audio_file', 'aligned_file', 'alignment_index'])
     has_split_entity = CLI_ARGS.split and CLI_ARGS.split_field is not None
-    for sample_id, fragment in id_plus_fragment_iter:
+    for sample_id, fragment in progress(id_plus_fragment_iter, total=total):
         split_entity = fragment.meta[CLI_ARGS.split_field] if has_split_entity else ''
         source_audio_file, aligned_file = catalog_entries[fragment.catalog_index]
         writer.writerow([sample_id,
@@ -602,15 +603,20 @@ def write_csvs_and_samples(catalog_entries, lists, fragments):
                 file_size = base_wav_file.tell()
         group_list.append((sample_path, file_size, fragment, transcript))
 
-    for list_name, group_list in progress(group_lists.items(), desc='Writing lists'):
-        with TargetFile(list_name + '.csv', 'w') as csv_file:
+    for list_name, group_list in group_lists.items():
+        csv_filename = list_name + '.csv'
+        logging.info('Writing "{}"'.format(csv_filename))
+        with TargetFile(csv_filename, 'w') as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow(['wav_filename', 'wav_filesize', 'transcript'])
-            for rel_path, file_size, fragment, transcript in group_list:
+            for rel_path, file_size, fragment, transcript in progress(group_list):
                 writer.writerow([rel_path, file_size, transcript])
         if not CLI_ARGS.no_meta:
-            with TargetFile(list_name + '.meta', 'w') as meta_file:
-                write_meta(meta_file, catalog_entries, map(lambda gi: (gi[0], gi[2]), group_list))
+            meta_filename = list_name + '.meta'
+            logging.info('Writing "{}"'.format(meta_filename))
+            with TargetFile(meta_filename, 'w') as meta_file:
+                path_fragment_list = map(lambda gi: (gi[0], gi[2]), group_list)
+                write_meta(meta_file, catalog_entries, path_fragment_list, total=len(group_list))
 
     if tar is not None:
         tar.close()
@@ -653,11 +659,13 @@ def write_sdbs(catalog_entries, lists, fragments):
             if not CLI_ARGS.no_meta:
                 logging.info('Would write meta file "{}"'.format(meta_path))
         else:
-            for _ in progress(sdb.finalize(), desc='Finalizing {}'.format(list_name), total=set_counter[list_name]):
+            sdb_path = os.path.join(CLI_ARGS.target_dir, list_name + '.sdb')
+            for _ in progress(sdb.finalize(), desc='Finalizing "{}"'.format(sdb_path), total=set_counter[list_name]):
                 pass
             if not CLI_ARGS.no_meta:
+                logging.info('Writing "{}"'.format(meta_path))
                 with open(meta_path, 'w') as meta_file:
-                    write_meta(meta_file, catalog_entries, enumerate(sdb.meta_list))
+                    write_meta(meta_file, catalog_entries, enumerate(sdb.meta_list), total=len(sdb.meta_list))
 
 
 def load_plan():
