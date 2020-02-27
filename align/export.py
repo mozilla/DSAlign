@@ -689,19 +689,16 @@ def save_plan(catalog_entries, lists, fragments):
 
 
 def main():
+    check_targets()
     has_plan, catalog_entries, lists, fragments = load_plan()
-    if has_plan:
-        check_targets()
-        check_overwrite(lists)
-    else:
+    if not has_plan:
         set_assignments = parse_set_assignments()
-        check_targets()
         catalog_entries = load_catalog()
         fragments = load_fragments(catalog_entries)
         fragments = debias(fragments)
         lists = split(fragments, set_assignments)
         save_plan(catalog_entries, lists, fragments)
-        check_overwrite(lists)
+    check_overwrite(lists)
     if CLI_ARGS.sdb:
         write_sdbs(catalog_entries, lists, fragments)
     else:
