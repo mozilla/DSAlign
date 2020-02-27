@@ -216,6 +216,7 @@ class SortingSDBWriter:  # pylint: disable=too-many-instance-attributes
                 self.meta_list.append(self.meta_dict[old_id])
                 del self.meta_dict[old_id]
                 yield index / num_samples
+        sdb_reader.close()
         os.unlink(self.tmp_sdb_filename)
 
     def close(self):
