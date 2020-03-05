@@ -237,7 +237,7 @@ class SDB:  # pylint: disable=too-many-instance-attributes
         if self.sdb_file.read(len(MAGIC)) != MAGIC:
             raise RuntimeError('No Sample Database')
         meta_chunk_len = self.read_big_int()
-        self.meta = json.loads(self.sdb_file.read(meta_chunk_len))
+        self.meta = json.loads(self.sdb_file.read(meta_chunk_len).decode())
         if SCHEMA_KEY not in self.meta:
             raise RuntimeError('Missing schema')
         self.schema = self.meta[SCHEMA_KEY]
