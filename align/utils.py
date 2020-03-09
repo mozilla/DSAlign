@@ -68,8 +68,7 @@ def log_progress(it, total=None, interval=60.0, step=None, entity='it', file=sys
             percent = global_step * 100.0 / total
             eta = secs_to_hours(((total - global_step) / speed) if speed > 0 else 0)
             line = line_format.format(global_step, total, percent, elapsed_str, print_speed, entity, speed_unit, eta)
-        print(line, file=file)
-        file.flush()
+        print(line, file=file, flush=True)
 
     for global_step, obj in enumerate(it, 1):
         interval_steps += 1

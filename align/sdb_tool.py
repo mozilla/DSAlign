@@ -24,13 +24,15 @@ AUDIO_TYPE_LOOKUP = {
 
 
 def progress(it=None, desc='Processing', total=None):
-    print(desc)
+    print(desc, file=sys.stderr, flush=True)
     return it if CLI_ARGS.no_progress else log_progress(it, interval=CLI_ARGS.progress_interval, total=total)
 
 
 def add_samples(sdb_writer):
     samples = samples_from_files(CLI_ARGS.sources)
-    for sample in progress(change_audio_types(samples, audio_type=sdb_writer.audio_type, processes=CLI_ARGS.workers)):
+    for sample in progress(change_audio_types(samples, audio_type=sdb_writer.audio_type, processes=CLI_ARGS.workers),
+                           total=len(samples),
+                           desc='Writing "{}"...'.format(CLI_ARGS.target)):
         sdb_writer.add(sample)
 
 
