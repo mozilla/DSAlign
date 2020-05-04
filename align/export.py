@@ -222,7 +222,7 @@ def parse_set_assignments():
         if hasattr(CLI_ARGS, attr_name):
             set_entities = getattr(CLI_ARGS, attr_name)
             if set_entities is not None:
-                for entity_id in str(set_entities).split(','):
+                for entity_id in filter(None, str(set_entities).split(',')):
                     if entity_id in set_assignments:
                         fail('Unable to assign entity "{}" to set "{}", as it is already assigned to set "{}"'
                              .format(entity_id, set_name, SET_NAMES[set_assignments[entity_id]]))
