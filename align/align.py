@@ -352,7 +352,7 @@ def align(triple):
                                    str(time_start / 1000.0),
                                    '=' + str(time_end / 1000.0)])
     with open(aligned, 'w', encoding='utf-8') as result_file:
-        result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None))
+        result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None, ensure_ascii=False))
     return aligned, len(result_fragments), len(fragments) - len(result_fragments), reasons
 
 
@@ -505,7 +505,7 @@ def main():
 
             logging.debug('Writing transcription log to file "{}"...'.format(tlog_path))
             with open(tlog_path, 'w', encoding='utf-8') as tlog_file:
-                tlog_file.write(json.dumps(fragments, indent=4 if args.output_pretty else None))
+                tlog_file.write(json.dumps(fragments, indent=4 if args.output_pretty else None, ensure_ascii=False))
         if not path.isfile(tlog_path):
             fail('Problem loading transcript from "{}"'.format(tlog_path))
         to_align.append((tlog_path, script_path, aligned_path))
