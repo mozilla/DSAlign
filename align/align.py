@@ -447,9 +447,12 @@ def main():
                     os.remove(scorer_path + '.' + 'lower.txt.gz')
                     os.remove(scorer_path + '.' + 'lm.arpa')
                     os.remove(scorer_path + '.' + 'lm_filtered.arpa')
+                    os.remove(clean_text_path)
 
                     # Generate scorer
                     create_bundle(alphabet_path, scorer_path + '.' + 'lm.binary', scorer_path + '.' + 'vocab-500000.txt', scorer_path, False, 0.931289039105002, 1.1834137581510284)
+                    os.remove(scorer_path + '.' + 'lm.binary')
+                    os.remove(scorer_path + '.' + 'vocab-500000.txt')
             else:
                 scorer_path = lang_scorer_path
 
