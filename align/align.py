@@ -14,6 +14,8 @@ from glob import glob
 from text import Alphabet, TextCleaner, levenshtein, similarity
 from utils import enweight, log_progress
 from audio import DEFAULT_RATE, read_frames_from_file, vad_split
+from generate_lm import convert_and_filter_topk, build_lm
+from generate_package import create_bundle
 
 BEAM_WIDTH = 500
 LM_ALPHA = 1
@@ -46,7 +48,7 @@ def read_script(script_path):
                      dashes_to_ws=not args.text_keep_dashes,
                      normalize_space=not args.text_keep_ws,
                      to_lower=not args.text_keep_casing)
-    with open(script_path, 'r') as script_file:
+    with open(script_path, 'r', encoding='utf-8') as script_file:
         content = script_file.read()
         if script_path.endswith('.script'):
             for phrase in json.loads(content):
@@ -61,10 +63,10 @@ def read_script(script_path):
 
 model = None
 
-def init_stt(output_graph_path, lm_path, trie_path):
+def init_stt(output_graph_path, scorer_path):
     global model
-    model = deepspeech.Model(output_graph_path, BEAM_WIDTH)
-    model.enableDecoderWithLM(lm_path, trie_path, LM_ALPHA, LM_BETA)
+    model = deepspeech.Model(output_graph_path)
+    model.enableExternalScorer(scorer_path)
     logging.debug('Process {}: Loaded models'.format(os.getpid()))
 
 
@@ -89,7 +91,7 @@ def align(triple):
                          gap_score=args.align_gap_score)
 
     logging.debug("Loading transcription log from %s..." % tlog)
-    with open(tlog, 'r') as transcription_log_file:
+    with open(tlog, 'r', encoding='utf-8') as transcription_log_file:
         fragments = json.load(transcription_log_file)
     end_fragments = (args.start + args.num_samples) if args.num_samples else len(fragments)
     fragments = fragments[args.start:end_fragments]
@@ -349,7 +351,7 @@ def align(triple):
                                    'trim',
                                    str(time_start / 1000.0),
                                    '=' + str(time_end / 1000.0)])
-    with open(aligned, 'w') as result_file:
+    with open(aligned, 'w', encoding='utf-8') as result_file:
         result_file.write(json.dumps(result_fragments, indent=4 if args.output_pretty else None))
     return aligned, len(result_fragments), len(fragments) - len(result_fragments), reasons
 
@@ -401,7 +403,7 @@ def main():
             fail('Unable to load catalog file "{}"'.format(args.catalog))
         catalog = path.abspath(args.catalog)
         catalog_dir = path.dirname(catalog)
-        with open(catalog, 'r') as catalog_file:
+        with open(catalog, 'r', encoding='utf-8') as catalog_file:
             catalog_entries = json.load(catalog_file)
         for entry in progress(catalog_entries, desc='Reading catalog'):
             enqueue_or_fail(resolve(catalog_dir, entry['audio']),
@@ -420,9 +422,8 @@ def main():
         if not exists(tlog_path):
             if output_graph_path is None:
                 logging.debug('Looking for model files in "{}"...'.format(model_dir))
-                output_graph_path = glob(model_dir + "/output_graph.pb")[0]
-                lang_lm_path = glob(model_dir + "/lm.binary")[0]
-                lang_trie_path = glob(model_dir + "/trie")[0]
+                output_graph_path = glob(model_dir + "/output_graph.pbmm")[0]
+                lang_scorer_path = glob(model_dir + "/kenlm.scorer")[0]
             kenlm_path = 'dependencies/kenlm/build/bin'
             if not path.exists(kenlm_path):
                 kenlm_path = None
@@ -435,45 +436,25 @@ def main():
                     logging.error('Cleaned transcript is empty for {}'.format(path.basename(script_path)))
                     continue
                 clean_text_path = script_path + '.clean'
-                with open(clean_text_path, 'w') as clean_text_file:
+                with open(clean_text_path, 'w', encoding='utf-8') as clean_text_file:
                     clean_text_file.write(tc.clean_text)
 
-                arpa_path = script_path + '.arpa'
-                if not path.exists(arpa_path):
-                    subprocess.check_call([
-                        kenlm_path + '/lmplz',
-                        '--discount_fallback',
-                        '--text',
-                        clean_text_path,
-                        '--arpa',
-                        arpa_path,
-                        '--o',
-                        '5'
-                    ])
+                scorer_path = script_path + '.scorer'
+                if not path.exists(scorer_path):
+                    # Generate LM
+                    data_lower, vocab_str = convert_and_filter_topk(scorer_path, clean_text_path, 500000)
+                    build_lm(scorer_path, kenlm_path, 5, '85%', '0|0|1', True, 255, 8, 'trie', data_lower, vocab_str)
+                    os.remove(scorer_path + '.' + 'lower.txt.gz')
+                    os.remove(scorer_path + '.' + 'lm.arpa')
+                    os.remove(scorer_path + '.' + 'lm_filtered.arpa')
 
-                lm_path = script_path + '.lm'
-                if not path.exists(lm_path):
-                    subprocess.check_call([
-                        kenlm_path + '/build_binary',
-                        '-s',
-                        arpa_path,
-                        lm_path
-                    ])
-
-                trie_path = script_path + '.trie'
-                if not path.exists(trie_path):
-                    subprocess.check_call([
-                        deepspeech_path + '/generate_trie',
-                        alphabet_path,
-                        lm_path,
-                        trie_path
-                    ])
+                    # Generate scorer
+                    create_bundle(alphabet_path, scorer_path + '.' + 'lm.binary', scorer_path + '.' + 'vocab-500000.txt', scorer_path, False, 0.931289039105002, 1.1834137581510284)
             else:
-                lm_path = lang_lm_path
-                trie_path = lang_trie_path
+                scorer_path = lang_scorer_path
 
-            logging.debug('Loading acoustic model from "{}", alphabet from "{}", trie from "{}" and language model from "{}"...'
-                          .format(output_graph_path, alphabet_path, trie_path, lm_path))
+            logging.debug('Loading acoustic model from "{}", alphabet from "{}" and scorer from "{}"...'
+                          .format(output_graph_path, alphabet_path, scorer_path))
 
             # Run VAD on the input file
             logging.debug('Transcribing VAD segments...')
@@ -498,10 +479,15 @@ def main():
 
             samples = list(progress(pre_filter(), desc='VAD splitting'))
 
-            pool = multiprocessing.Pool(initializer=init_stt,
-                                        initargs=(output_graph_path, lm_path, trie_path),
-                                        processes=args.stt_workers)
-            transcripts = list(progress(pool.imap(stt, samples), desc='Transcribing', total=len(samples)))
+            # TODO: OOM
+            #pool = multiprocessing.Pool(initializer=init_stt,
+            #                            initargs=(output_graph_path, scorer_path),
+            #                            processes=args.stt_workers)
+            #transcripts = list(progress(pool.imap(stt, samples), desc='Transcribing', total=len(samples)))
+            transcripts = []
+            init_stt(output_graph_path, scorer_path)
+            for sample in samples:
+                transcripts.append(stt(sample))
 
             fragments = []
             for time_start, time_end, segment_transcript in transcripts:
@@ -515,7 +501,7 @@ def main():
             logging.debug('Excluded {} empty transcripts'.format(len(transcripts) - len(fragments)))
 
             logging.debug('Writing transcription log to file "{}"...'.format(tlog_path))
-            with open(tlog_path, 'w') as tlog_file:
+            with open(tlog_path, 'w', encoding='utf-8') as tlog_file:
                 tlog_file.write(json.dumps(fragments, indent=4 if args.output_pretty else None))
         if not path.isfile(tlog_path):
             fail('Problem loading transcript from "{}"'.format(tlog_path))

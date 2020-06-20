@@ -106,7 +106,7 @@ def load_catalog():
     elif CLI_ARGS.catalog:
         catalog = check_path(CLI_ARGS.catalog)
         catalog_dir = path.dirname(catalog)
-        with open(catalog, 'r') as catalog_file:
+        with open(catalog, 'r', encoding='utf-8') as catalog_file:
             catalog_file_entries = json.load(catalog_file)
         for entry in progress(catalog_file_entries, desc='Reading catalog'):
             audio = make_absolute(catalog_dir, entry['audio'])
@@ -146,7 +146,7 @@ def load_fragments(catalog_entries):
     reasons = Counter()
     for catalog_index, catalog_entry in enumerate(progress(catalog_entries, desc='Loading alignments')):
         audio_path, aligned_path = catalog_entry
-        with open(aligned_path, 'r') as aligned_file:
+        with open(aligned_path, 'r', encoding='utf-8') as aligned_file:
             aligned = json.load(aligned_file)
         for alignment_index, alignment in enumerate(aligned):
             quality = eval(CLI_ARGS.criteria, {'math': math}, alignment)
@@ -443,7 +443,7 @@ def parse_args():
 def load_sample(entry):
     catalog_index, catalog_entry = entry
     audio_path, aligned_path = catalog_entry
-    with open(aligned_path, 'r') as aligned_file:
+    with open(aligned_path, 'r', encoding='utf-8') as aligned_file:
         aligned = json.load(aligned_file)
     tries = 2
     while tries > 0:

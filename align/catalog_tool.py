@@ -25,7 +25,7 @@ def build_catalog():
         print('Loading catalog "{}"'.format(str(catalog_original_path)))
         if not catalog_path.is_file():
             fail('Unable to find catalog file "{}"'.format(str(catalog_path)))
-        with open(catalog_path, 'r') as catalog_file:
+        with open(catalog_path, 'r', encoding='utf-8') as catalog_file:
             catalog_items = json.load(catalog_file)
         base_path = catalog_path.parent.absolute()
         for item in catalog_items:
@@ -62,7 +62,7 @@ def build_catalog():
                     item[entry] = str(Path(item[entry]).relative_to(base_path))
         if CLI_ARGS.order_by is not None:
             items.sort(key=lambda i: i[CLI_ARGS.order_by] if CLI_ARGS.order_by in i else '')
-        with open(catalog_path, 'w') as catalog_file:
+        with open(catalog_path, 'w', encoding='utf-8') as catalog_file:
             json.dump(items, catalog_file, indent=2)
 
 

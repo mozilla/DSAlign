@@ -11,7 +11,7 @@ def main(args):
     parser.add_argument('assignments', nargs='+', help='Meta data assignments of the form <key>=<value>')
     args = parser.parse_args()
 
-    with open(args.target, 'r') as json_file:
+    with open(args.target, 'r', encoding='utf-8') as json_file:
         entries = json.load(json_file)
 
     for assignment in args.assignments:
@@ -22,7 +22,7 @@ def main(args):
         for entry in entries:
             entry[key] = value
 
-    with open(args.target, 'w') as json_file:
+    with open(args.target, 'w', encoding='utf-8') as json_file:
         json.dump(entries, json_file, indent=2)
 
 
