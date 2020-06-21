@@ -155,6 +155,7 @@ def ensure_wav_with_format(src_audio_path, audio_format=DEFAULT_FORMAT, tmp_dir=
                 return src_audio_path, False
     fd, tmp_file_path = tempfile.mkstemp(suffix='.wav', dir=tmp_dir)
     os.close(fd)
+    fd = None
     if convert_audio(src_audio_path, tmp_file_path, file_type='wav', audio_format=audio_format):
         return tmp_file_path, True
     os.remove(tmp_file_path)
@@ -185,7 +186,9 @@ class AudioFile:
                     return self.audio_path
                 return self.open_file
             self.open_file.close()
-        _, self.tmp_file_path = tempfile.mkstemp(suffix='.wav')
+        test, self.tmp_file_path = tempfile.mkstemp(suffix='.wav')
+        os.close(test)
+        test = None
         if not convert_audio(self.audio_path, self.tmp_file_path, file_type='wav', audio_format=self.audio_format):
             raise RuntimeError('Unable to convert "{}" to required format'.format(self.audio_path))
         if self.as_path:
@@ -194,10 +197,12 @@ class AudioFile:
         return self.open_file
 
     def __exit__(self, *args):
+        self.open_file.close()
         if not self.as_path:
             self.open_file.close()
         if self.tmp_file_path is not None:
             os.remove(self.tmp_file_path)
+        self.open_file = None
 
 
 def read_frames(wav_file, frame_duration_ms=30, yield_remainder=False):
@@ -337,6 +342,7 @@ def read_wav(wav_file):
     with wave.open(wav_file, 'rb') as wav_file_reader:
         audio_format = read_audio_format_from_wav_file(wav_file_reader)
         pcm_data = wav_file_reader.readframes(wav_file_reader.getnframes())
+        os.close(wav_file)
         return audio_format, pcm_data
 
 
