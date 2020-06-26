@@ -1,18 +1,13 @@
-import argparse
 import gzip
 import io
 import os
 import subprocess
 from collections import Counter
 
-from tqdm import tqdm
-
-
 def convert_and_filter_topk(output_dir, input_txt, top_k):
     """ Convert to lowercase, count word occurrences and save top-k words to a file """
 
     counter = Counter()
-    #data_lower = os.path.join(output_dir, "lower.txt.gz")
     data_lower = output_dir + "." + "lower.txt.gz"
 
     print("\nConverting to lowercase and counting word occurrences ...")
@@ -29,7 +24,7 @@ def convert_and_filter_topk(output_dir, input_txt, top_k):
         else:
             file_in = open(input_txt, encoding="utf-8")
 
-        for line in tqdm(file_in):
+        for line in file_in:
             line_lower = line.lower()
             counter.update(line_lower.split())
             file_out.write(line_lower)
@@ -41,7 +36,6 @@ def convert_and_filter_topk(output_dir, input_txt, top_k):
     top_counter = counter.most_common(top_k)
     vocab_str = "\n".join(word for word, count in top_counter)
     vocab_path = "vocab-{}.txt".format(top_k)
-    #vocab_path = os.path.join(output_dir, vocab_path)
     vocab_path = output_dir + "." + vocab_path
     with open(vocab_path, "w+", encoding="utf-8") as file:
         file.write(vocab_str)
@@ -129,85 +123,3 @@ def build_lm(output_dir, kenlm_bins, arpa_order, max_arpa_memory, arpa_prune, di
             binary_path,
         ]
     )
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Generate lm.binary and top-k vocab for DeepSpeech."
-    )
-    parser.add_argument(
-        "--input_txt",
-        help="Path to a file.txt or file.txt.gz with sample sentences",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        "--output_dir", help="Directory path for the output", type=str, required=True
-    )
-    parser.add_argument(
-        "--top_k",
-        help="Use top_k most frequent words for the vocab.txt file. These will be used to filter the ARPA file.",
-        type=int,
-        required=True,
-    )
-    parser.add_argument(
-        "--kenlm_bins",
-        help="File path to the KENLM binaries lmplz, filter and build_binary",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        "--arpa_order",
-        help="Order of k-grams in ARPA-file generation",
-        type=int,
-        required=True,
-    )
-    parser.add_argument(
-        "--max_arpa_memory",
-        help="Maximum allowed memory usage for ARPA-file generation",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        "--arpa_prune",
-        help="ARPA pruning parameters. Separate values with '|'",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        "--binary_a_bits",
-        help="Build binary quantization value a in bits",
-        type=int,
-        required=True,
-    )
-    parser.add_argument(
-        "--binary_q_bits",
-        help="Build binary quantization value q in bits",
-        type=int,
-        required=True,
-    )
-    parser.add_argument(
-        "--binary_type",
-        help="Build binary data structure type",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        "--discount_fallback",
-        help="To try when such message is returned by kenlm: 'Could not calculate Kneser-Ney discounts [...] rerun with --discount_fallback'",
-        action="store_true",
-    )
-
-    args = parser.parse_args()
-
-    data_lower, vocab_str = convert_and_filter_topk(args)
-    build_lm(args, data_lower, vocab_str)
-
-    # Delete intermediate files
-    os.remove(os.path.join(args.output_dir, "lower.txt.gz"))
-    os.remove(os.path.join(args.output_dir, "lm.arpa"))
-    os.remove(os.path.join(args.output_dir, "lm_filtered.arpa"))
-
-
-if __name__ == "__main__":
-    main()

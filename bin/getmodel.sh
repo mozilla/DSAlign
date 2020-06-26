@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 
-version="0.6.0"
+version="0.7.1"
 dir="deepspeech-${version}-models"
-archive="${dir}.tar.gz"
+am="${dir}.pbmm"
+scorer="${dir}.scorer"
 
-mkdir -p models
-cd models
-if [[ ! -f $archive ]] ; then
-    wget "https://github.com/mozilla/DeepSpeech/releases/download/v${version}/${archive}"
+mkdir -p models/en
+cd models/en
+
+if [[ ! -f $am ]] ; then
+    wget "https://github.com/mozilla/DeepSpeech/releases/download/v${version}/${am}"
 fi
 
-tar -xzvf $archive
-mv $dir en
+if [[ ! -f $scorer ]] ; then
+    wget "https://github.com/mozilla/DeepSpeech/releases/download/v${version}/${scorer}"
+fi
 
-wget "https://raw.githubusercontent.com/mozilla/DeepSpeech/master/data/alphabet.txt"
-mv alphabet.txt en
+if [[ ! -f "alphabet.txt" ]] ; then
+    wget "https://raw.githubusercontent.com/mozilla/DeepSpeech/master/data/alphabet.txt"
+fi

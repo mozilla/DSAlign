@@ -1,7 +1,3 @@
-#!/usr/bin/env python
-from __future__ import absolute_import, division, print_function
-
-import argparse
 import shutil
 import sys
 
@@ -55,6 +51,7 @@ def create_bundle(
     scorer.set_utf8_mode(use_utf8)
     scorer.reset_params(default_alpha, default_beta)
     scorer.load_lm(lm_path)
+    # TODO: Why is this not working?
     #err = scorer.load_lm(lm_path)
     #if err != ds_ctcdecoder.DS_ERR_SCORER_NO_TRIE:
     #    print('Error loading language model file: 0x{:X}.'.format(err))
@@ -64,91 +61,3 @@ def create_bundle(
     shutil.copy(lm_path, package_path)
     scorer.save_dictionary(package_path, True)  # append, not overwrite
     print("Package created in {}".format(package_path))
-
-
-class Tristate(object):
-    def __init__(self, value=None):
-        if any(value is v for v in (True, False, None)):
-            self.value = value
-        else:
-            raise ValueError("Tristate value must be True, False, or None")
-
-    def __eq__(self, other):
-        return (
-            self.value is other.value
-            if isinstance(other, Tristate)
-            else self.value is other
-        )
-
-    def __ne__(self, other):
-        return not self == other
-
-    def __bool__(self):
-        raise TypeError("Tristate object may not be used as a Boolean")
-
-    def __str__(self):
-        return str(self.value)
-
-    def __repr__(self):
-        return "Tristate(%s)" % self.value
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Generate an external scorer package for DeepSpeech."
-    )
-    parser.add_argument(
-        "--alphabet",
-        help="Path of alphabet file to use for vocabulary construction. Words with characters not in the alphabet will not be included in the vocabulary. Optional if using UTF-8 mode.",
-    )
-    parser.add_argument(
-        "--lm",
-        required=True,
-        help="Path of KenLM binary LM file. Must be built without including the vocabulary (use the -v flag). See generate_lm.py for how to create a binary LM.",
-    )
-    parser.add_argument(
-        "--vocab",
-        required=True,
-        help="Path of vocabulary file. Must contain words separated by whitespace.",
-    )
-    parser.add_argument("--package", required=True, help="Path to save scorer package.")
-    parser.add_argument(
-        "--default_alpha",
-        type=float,
-        required=True,
-        help="Default value of alpha hyperparameter.",
-    )
-    parser.add_argument(
-        "--default_beta",
-        type=float,
-        required=True,
-        help="Default value of beta hyperparameter.",
-    )
-    parser.add_argument(
-        "--force_utf8",
-        type=str,
-        default="",
-        help="Boolean flag, force set or unset UTF-8 mode in the scorer package. If not set, infers from the vocabulary. See <https://github.com/mozilla/DeepSpeech/blob/master/doc/Decoder.rst#utf-8-mode> for further explanation",
-    )
-    args = parser.parse_args()
-
-    if args.force_utf8 in ("True", "1", "true", "yes", "y"):
-        force_utf8 = Tristate(True)
-    elif args.force_utf8 in ("False", "0", "false", "no", "n"):
-        force_utf8 = Tristate(False)
-    else:
-        force_utf8 = Tristate(None)
-
-    create_bundle(
-        args.alphabet,
-        args.lm,
-        args.vocab,
-        args.package,
-        force_utf8,
-        args.default_alpha,
-        args.default_beta,
-    )
-
-
-if __name__ == "__main__":
-    main()

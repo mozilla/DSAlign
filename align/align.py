@@ -422,8 +422,8 @@ def main():
         if not exists(tlog_path):
             if output_graph_path is None:
                 logging.debug('Looking for model files in "{}"...'.format(model_dir))
-                output_graph_path = glob(model_dir + "/output_graph.pbmm")[0]
-                lang_scorer_path = glob(model_dir + "/kenlm.scorer")[0]
+                output_graph_path = glob(model_dir + "/*.pbmm")[0]
+                lang_scorer_path = glob(model_dir + "/*.scorer")[0]
             kenlm_path = 'dependencies/kenlm/build/bin'
             if not path.exists(kenlm_path):
                 kenlm_path = None
