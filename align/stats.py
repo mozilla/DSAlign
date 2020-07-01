@@ -126,6 +126,8 @@ def main(args):
                         help='Read alignment references of provided catalog ("<...>.catalog") as input')
     parser.add_argument('--no-progress', action='store_true',
                         help='Prevents showing progress bars')
+    parser.add_argument('--progress-interval', type=float, default=1.0,
+                        help='Progress indication interval in seconds')
 
     args = parser.parse_args()
 

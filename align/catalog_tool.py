@@ -20,9 +20,9 @@ def build_catalog():
     for source_glob in CLI_ARGS.sources:
         catalog_paths.extend(glob(source_glob))
     items = []
-    for catalog_path in catalog_paths:
-        catalog_path = Path(catalog_path).absolute()
-        print('Loading catalog "{}"'.format(str(catalog_path)))
+    for catalog_original_path in catalog_paths:
+        catalog_path = Path(catalog_original_path).absolute()
+        print('Loading catalog "{}"'.format(str(catalog_original_path)))
         if not catalog_path.is_file():
             fail('Unable to find catalog file "{}"'.format(str(catalog_path)))
         with open(catalog_path, 'r') as catalog_file:
@@ -30,13 +30,13 @@ def build_catalog():
         base_path = catalog_path.parent.absolute()
         for item in catalog_items:
             new_item = {}
-            for entry, entry_path in item.items():
-                entry_path = Path(entry_path)
-                entry_path = entry_path if entry_path.is_absolute() else (base_path / entry_path)
+            for entry, entry_original_path in item.items():
+                entry_path = Path(entry_original_path)
+                entry_path = entry_path if entry_path.is_absolute() else (base_path / entry_path).absolute()
                 if ((len(CLI_ARGS.check) == 1 and CLI_ARGS.check[0] == 'all')
                         or entry in CLI_ARGS.check) and not entry_path.is_file():
                     note = 'Catalog "{}" - Missing file for "{}" ("{}")'.format(
-                        str(catalog_path), entry, str(entry_path))
+                        str(catalog_original_path), entry, str(entry_original_path))
                     if CLI_ARGS.on_miss == 'fail':
                         fail(note + ' - aborting')
                     if CLI_ARGS.on_miss == 'ignore':
@@ -54,7 +54,7 @@ def build_catalog():
                 items.append(new_item)
     if CLI_ARGS.output is not None:
         catalog_path = Path(CLI_ARGS.output).absolute()
-        print('Writing catalog "{}"'.format(str(catalog_path)))
+        print('Writing catalog "{}"'.format(str(CLI_ARGS.output)))
         if CLI_ARGS.make_relative:
             base_path = catalog_path.parent
             for item in items:
@@ -63,7 +63,7 @@ def build_catalog():
         if CLI_ARGS.order_by is not None:
             items.sort(key=lambda i: i[CLI_ARGS.order_by] if CLI_ARGS.order_by in i else '')
         with open(catalog_path, 'w') as catalog_file:
-            json.dump(items, catalog_file)
+            json.dump(items, catalog_file, indent=2)
 
 
 def handle_args():
@@ -71,7 +71,7 @@ def handle_args():
                                                  'converting paths within catalog files')
     parser.add_argument('--output', help='Write collected catalog items to this new catalog file')
     parser.add_argument('--make-relative', action='store_true',
-                        help='Make all path entries of all items relative to target catalog file\'s parent directory')
+                        help='Make all path entries of all items relative to new catalog file\'s parent directory')
     parser.add_argument('--check',
                         help='Comma separated list of path entries to check for existence '
                              '("all" for checking every entry, default: no checks)')
