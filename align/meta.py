@@ -8,14 +8,14 @@ forbidden_keys = ['start', 'end', 'text', 'transcript']
 def main(args):
     parser = argparse.ArgumentParser(description='Annotate .tlog or .script files by adding meta data')
     parser.add_argument('target', type=str, help='')
-    parser.add_argument('assignment', action='append', help='Meta data assignment of the form <key>=<value>')
+    parser.add_argument('assignments', nargs='+', help='Meta data assignments of the form <key>=<value>')
     args = parser.parse_args()
 
     with open(args.target, 'r') as json_file:
         entries = json.load(json_file)
 
-    for assign in args.assignment:
-        key, value = assign.split('=')
+    for assignment in args.assignments:
+        key, value = assignment.split('=')
         if key in forbidden_keys:
             print('Meta data key "{}" not allowed - forbidden: {}'.format(key, '|'.join(forbidden_keys)))
             sys.exit(1)
@@ -23,7 +23,7 @@ def main(args):
             entry[key] = value
 
     with open(args.target, 'w') as json_file:
-        json.dump(entries, json_file)
+        json.dump(entries, json_file, indent=2)
 
 
 if __name__ == '__main__':

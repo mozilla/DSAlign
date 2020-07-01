@@ -338,7 +338,6 @@ def parse_args():
                         help='Take audio file as input (requires "--aligned <file>")')
     parser.add_argument('--aligned', type=str,
                         help='Take alignment file ("<...>.aligned") as input (requires "--audio <file>")')
-
     parser.add_argument('--catalog', type=str,
                         help='Take alignment and audio file references of provided catalog ("<...>.catalog") as input')
     parser.add_argument('--ignore-missing', action="store_true",
