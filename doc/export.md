@@ -75,7 +75,7 @@ sample with more than one "speaker".
 
 In contrast option `--split-drop-unknown` allows for dropping all samples with no `--split-field assignment`.
 
-With option '--assign-{train|dev|test} <VALUES>' one can pre-assign values (of the comma-separated list)
+With option `--assign-{train|dev|test} <VALUES>` one can pre-assign values (of the comma-separated list)
 to the specified set.
 
 Option `--split-seed <SEED>` sets an integer random seed for the split operation.

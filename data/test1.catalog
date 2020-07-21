@@ -1,0 +1,8 @@
+[
+  {
+    "audio": "test1/joined.mp3",
+    "tlog": "test1/joined.tlog",
+    "script": "test1/transcript.txt",
+    "aligned": "test1/aligned.json"
+  }
+]
