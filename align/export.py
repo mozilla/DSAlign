@@ -504,8 +504,13 @@ def load_samples(catalog_entries, fragments):
                         assert start < end <= wav_duration
                         fragment_audio = extract_audio(source_wav_file, start / 1000.0, end / 1000.0)
                     except Exception as ae:
-                        raise RuntimeError('Problem getting audio for fragment\n{}"'
-                                           .format(json.dumps(fragment, indent=4))) from ae
+                        message = 'Problem extracting audio for alignment entry {} in catalog entry {}'\
+                            .format(fragment.alignment_index, fragment.catalog_index)
+                        if CLI_ARGS.skip_damaged:
+                            logging.warn(message)
+                            break
+                        else:
+                            raise RuntimeError(message) from ae
                     yield fragment_audio, fragment, aligned_entry['aligned']
             if wav_is_temp:
                 os.remove(wav_path)
